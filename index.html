@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FDTD Wave Simulation with SHG</title>
+    <style>
+        body {
+            background: #222;
+            margin: 0; 
+            overflow: hidden;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #debugText {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            pointer-events: none;
+        }
+        #controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="waveCanvas"></canvas>
+    <div id="debugText"></div>
+    <div id="controls">
+        <label><input type="checkbox" id="showSHG"> Show SHG Field</label><br>
+        <label><input type="checkbox" id="showLens"> Show Lens</label>
+    </div>
+<script>
+
+// Configuration and state objects
+const config = {
+    dt: .07,
+    dx: 0.25,
+    damping: 1,
+    c: 1.0,
+    n2: 3.5,                    // Strong focusing nonlinearity
+    Isat: 0.1,                 // Even lower saturation
+    chi: 0.25,                   // Extremely strong SHG coupling
+    
+    boundaryAlpha: 0.9,
+    boundaryM: 200,               
+    margin: 20,
+
+    gridSize: 1024,
+    
+    lensRadius: 3,
+    fresnelZones: 450,
+    numSectors: 1350,
+    
+    learningRate: 0.0000008,     // Very careful learning rate
+    optimizationInterval: 1,
+    
+    initialPulseAmplitude: 80,  // Lower initial amplitude
+    initialPulsePhaseShift: 0.03
+};
+
+// Calculate derived values
+config.boundaryR0 = (config.gridSize/2 - config.margin)/(1 + config.boundaryAlpha);
+
+const adamState = {
+    beta1: 0.9,
+    beta2: 0.999,
+    epsilon: 1e-8,
+    m_real: Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0)),
+    m_imag: Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0)),
+    v_real: Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0)),
+    v_imag: Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0)),
+    t: 0
+};
+
+// Add to global state
+let lensStatistics = {
+    q25: 0,
+    q75: 0,
+    displayMin: 0,
+    displayMax: 1
+};
+
+// Shader sources
+const vertexShaderSource = `#version 300 es
+in vec2 position;
+out vec2 uv;
+void main() {
+    uv = position * 0.5 + 0.5;
+    gl_Position = vec4(position, 0.0, 1.0);
+}`;
+
+const simulationShaderSource = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+
+uniform sampler2D u_current;
+uniform sampler2D u_previous;
+uniform sampler2D u_lens;
+uniform sampler2D u_fundamental;
+uniform float u_dt;
+uniform float u_dx;
+uniform float u_damping;
+uniform float u_c;
+uniform float u_n2;
+uniform float u_Isat;
+uniform float u_chi;
+uniform vec2 u_resolution;
+uniform float u_boundaryR0;
+uniform float u_boundaryAlpha;
+uniform float u_boundaryM;
+uniform int u_updateTarget;
+
+out vec4 fragColor;
+
+bool insideBoundary(vec2 pos) {
+    vec2 center = u_resolution * 0.5;
+    vec2 rel = pos - center;
+    float r = length(rel);
+    float theta = atan(rel.y, rel.x);
+    float boundaryRadius = u_boundaryR0 * (1.0 + u_boundaryAlpha * cos(u_boundaryM * theta));
+    return r <= boundaryRadius;
+}
+
+void main() {
+    vec2 pos = gl_FragCoord.xy;
+    vec2 texel = 1.0 / u_resolution;
+    
+    if (!insideBoundary(pos)) {
+        vec4 current = texture(u_current, pos * texel);
+        fragColor = vec4(-current.xy, 0.0, 1.0);
+        return;
+    }
+
+    // Sample all needed textures
+    vec4 center = texture(u_current, pos * texel);
+    vec4 left = texture(u_current, (pos + vec2(-1.0, 0.0)) * texel);
+    vec4 right = texture(u_current, (pos + vec2(1.0, 0.0)) * texel);
+    vec4 up = texture(u_current, (pos + vec2(0.0, -1.0)) * texel);
+    vec4 down = texture(u_current, (pos + vec2(0.0, 1.0)) * texel);
+    vec4 old = texture(u_previous, pos * texel);
+    vec4 lens = texture(u_lens, pos * texel);
+
+    // Calculate laplacian with explicit dx scaling
+    vec2 laplacianRaw = (left.xy + right.xy + up.xy + down.xy - 4.0 * center.xy) / (u_dx * u_dx);
+    
+    // Apply lens transformation
+    vec2 lensedLaplacian = vec2(
+        laplacianRaw.x * lens.x - laplacianRaw.y * lens.y,
+        laplacianRaw.x * lens.y + laplacianRaw.y * lens.x
+    );
+
+    if (u_updateTarget == 0) {
+        // Fundamental field update
+        float amp2 = dot(center.xy, center.xy);
+        float local_c2 = u_c * u_c * (1.0 + (u_n2 * amp2) / (1.0 + amp2/u_Isat));
+        
+        vec2 new_val = (2.0 * center.xy - old.xy + local_c2 * u_dt * u_dt * lensedLaplacian) * u_damping;
+        fragColor = vec4(new_val, 0.0, 1.0);
+    } else {
+        // SHG field update
+        float shg_amp2 = dot(center.xy, center.xy);
+        float local_c2 = u_c * u_c * (1.0 + (u_n2 * shg_amp2) / (1.0 + shg_amp2/u_Isat));
+        
+        // Source term from fundamental field
+        vec4 fund = texture(u_fundamental, pos * texel);
+        float fund_amp2 = dot(fund.xy, fund.xy);
+        float saturationFactor = 1.0 / (1.0 + fund_amp2/u_Isat);
+        vec2 sourceTerm = vec2(u_chi * fund_amp2 * saturationFactor, 0.0);
+        
+        vec2 new_val = (2.0 * center.xy - old.xy + 
+                      local_c2 * u_dt * u_dt * lensedLaplacian + 
+                      u_dt * u_dt * sourceTerm) * u_damping;
+        fragColor = vec4(new_val, 0.0, 1.0);
+    }
+}`;
+
+const displayShaderSource = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+
+uniform sampler2D u_field;
+uniform bool u_isLens;
+uniform float u_lensDisplayMin;
+uniform float u_lensDisplayMax;
+uniform float u_lensRadius;
+uniform vec2 u_resolution;
+
+in vec2 uv;
+out vec4 fragColor;
+
+vec3 hsv2rgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+void main() {
+    if (u_isLens) {
+        // Convert UV to centered coordinates
+        vec2 center = vec2(0.5, 0.5);  // Center in UV space
+        vec2 fromCenter = uv - center;
+        
+        // Scale to make radius check match lens radius in pixels
+        float r = length(fromCenter * u_resolution);
+        
+        if (r <= u_lensRadius) {
+            vec4 field = texture(u_field, uv);
+            float amp = length(field.xy);
+            float phase = atan(field.y, field.x);
+            
+            // For debugging - use simple visualization first
+            float hue = (phase + 3.14159) / 6.28318;
+            float sat = 1.0;
+            float val = amp / (1.0 + amp);
+            
+            fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
+        } else {
+            // Outside lens radius - should be black
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        }
+    } else {
+        // Regular field visualization (fundamental or SHG)
+        vec4 field = texture(u_field, uv);
+        float amp = length(field.xy);
+        float phase = atan(field.y, field.x);
+        
+        float hue = (phase + 3.14159) / 6.28318;
+        float sat = 1.0;
+        float val = amp / (1.0 + amp);
+        
+        fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
+    }
+}`;
+
+// Global variables and state
+let gl;
+let quadBuffer;
+let simulationProgram;
+let displayProgram;
+let fundamentalTextures;
+let fundamentalFramebuffers;
+let shgTextures;
+let shgFramebuffers;
+let lensTexture;
+let lensModes;
+let current = 0;
+let previous = 2;
+let next = 1;
+let frameCount = 0;
+let uniformLocations = {
+    simulation: {},
+    display: {}
+};
+
+// Readback state
+let readbackFramebuffer;
+const readbackWidth = config.lensRadius * 2;
+const readbackHeight = readbackWidth;
+const readbackBuffer = new Float32Array(readbackWidth * readbackHeight * 4);
+let intensityRatios, phaseDiffs, modeCount;
+
+async function initialize() {
+    console.log("Starting initialization...");
+    
+    try {
+        await initWebGL();
+        await initShaders();
+        await initBuffers();
+        await initTextures();
+        await initSimulationState();
+        
+        console.log("Initialization complete");
+        return true;
+    } catch (error) {
+        console.error("Initialization failed:", error);
+        document.getElementById('debugText').textContent = "Initialization failed: " + error.message;
+        throw error;
+    }
+}
+
+async function initWebGL() {
+    console.log("Initializing WebGL...");
+    const canvas = document.getElementById('waveCanvas');
+    gl = canvas.getContext('webgl2');
+    if (!gl) {
+        throw new Error("WebGL 2 not available");
+    }
+
+    const ext = gl.getExtension('EXT_color_buffer_float');
+    if (!ext) {
+        throw new Error("EXT_color_buffer_float extension not available");
+    }
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    console.log("WebGL initialized successfully");
+}
+
+function resizeCanvas() {
+    const canvas = document.getElementById('waveCanvas');
+    const pixelRatio = window.devicePixelRatio || 1;
+    canvas.width = window.innerWidth * pixelRatio;
+    canvas.height = window.innerHeight * pixelRatio;
+    canvas.style.width = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    if (gl) {
+        gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+}
+
+async function initShaders() {
+    console.log("Initializing shaders...");
+    
+    function createShader(type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            const error = new Error('Shader compile error: ' + gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            throw error;
+        }
+        return shader;
+    }
+
+    function createProgram(vertexSource, fragmentSource) {
+        const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error('Program link error: ' + gl.getProgramInfoLog(program));
+        }
+        return program;
+    }
+
+    simulationProgram = createProgram(vertexShaderSource, simulationShaderSource);
+    displayProgram = createProgram(vertexShaderSource, displayShaderSource);
+    
+    console.log("Shaders initialized successfully");
+}
+
+async function initBuffers() {
+    console.log("Initializing buffers...");
+    
+    quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        -1, -1,
+        1, -1,
+        -1, 1,
+        1, 1
+    ]), gl.STATIC_DRAW);
+    
+    console.log("Buffers initialized successfully");
+}
+
+async function initTextures() {
+    console.log("Initializing textures...");
+    
+    function createTexture() {
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 
+            config.gridSize, config.gridSize, 0, gl.RGBA, gl.FLOAT, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        return texture;
+    }
+
+    function createFramebuffer(texture) {
+        const fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) {
+            throw new Error('Framebuffer is incomplete: ' + status);
+        }
+        
+        return fb;
+    }
+
+    fundamentalTextures = [createTexture(), createTexture(), createTexture()];
+    fundamentalFramebuffers = fundamentalTextures.map(createFramebuffer);
+    shgTextures = [createTexture(), createTexture(), createTexture()];
+    shgFramebuffers = shgTextures.map(createFramebuffer);
+    lensTexture = createTexture();
+    
+    readbackFramebuffer = gl.createFramebuffer();
+    
+    console.log("Textures initialized successfully");
+}
+
+async function initSimulationState() {
+    console.log("Initializing simulation state...");
+    
+    // Initialize Adam state arrays
+    adamState.m_real = Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0));
+    adamState.m_imag = Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0));
+    adamState.v_real = Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0));
+    adamState.v_imag = Array(config.fresnelZones).fill().map(() => Array(config.numSectors).fill(0));
+    
+    // Initialize lens modes
+    lensModes = Array(config.fresnelZones).fill().map(() => 
+        Array(config.numSectors).fill().map(() => ({real: 1.0, imag: 0.0}))
+    );
+    
+    initializeFields();
+    cacheUniformLocations();
+    updateLensTexture();
+
+    intensityRatios = Array(config.fresnelZones).fill()
+        .map(() => Array(config.numSectors).fill(0));
+    phaseDiffs = Array(config.fresnelZones).fill()
+        .map(() => Array(config.numSectors).fill(0));
+    modeCount = Array(config.fresnelZones).fill()
+        .map(() => Array(config.numSectors).fill(0));
+    
+    console.log("Simulation state initialized successfully");
+}
+
+function initializeFields() {
+    console.log("Initializing fields...");
+    const startTime = performance.now();
+
+    const fundamentalData = new Float32Array(config.gridSize * config.gridSize * 4);
+    const zeroData = new Float32Array(config.gridSize * config.gridSize * 4);
+    const centerX = Math.floor(config.gridSize / 2);
+    const centerY = Math.floor(config.gridSize / 2);
+    
+    console.log("Arrays created at:", performance.now() - startTime, "ms");
+
+    // Initialize fundamental field with gaussian pulse
+    for (let j = -3; j <= 3; j++) {
+        for (let i = -3; i <= 3; i++) {
+            const x = centerX + i;
+            const y = centerY + j;
+            const idx = (y * config.gridSize + x) * 4;
+            fundamentalData[idx] = Math.exp(-(i*i + j*j)/4) * config.initialPulseAmplitude;
+            fundamentalData[idx + 1] = config.initialPulsePhaseShift;
+        }
+    }
+    
+    console.log("Loop completed at:", performance.now() - startTime, "ms");
+
+    // Upload textures
+    fundamentalTextures.forEach((texture, index) => {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, config.gridSize, config.gridSize, 
+                     0, gl.RGBA, gl.FLOAT, fundamentalData);
+    });
+    
+    shgTextures.forEach((texture, index) => {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, config.gridSize, config.gridSize, 
+                     0, gl.RGBA, gl.FLOAT, zeroData);
+    });
+
+    console.log("Fields initialization completed in:", performance.now() - startTime, "ms");
+}
+
+function updateLensTexture() {
+    const centerX = Math.floor(config.gridSize / 2);
+    const centerY = Math.floor(config.gridSize / 2);
+    const lensData = new Float32Array(config.gridSize * config.gridSize * 4);
+    
+    for (let y = 0; y < config.gridSize; y++) {
+        for (let x = 0; x < config.gridSize; x++) {
+            const idx = (y * config.gridSize + x) * 4;
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const r = Math.sqrt(dx*dx + dy*dy);
+            
+            if (r <= config.lensRadius) {
+                const zoneIndex = Math.floor((r/config.lensRadius) * config.fresnelZones);
+                const zInd = Math.max(0, Math.min(config.fresnelZones-1, zoneIndex));
+                let theta = Math.atan2(dy, dx);
+                let sectorIndex = Math.floor((theta + Math.PI)/(2*Math.PI/config.numSectors)) % config.numSectors;
+                
+                const mode = lensModes[zInd][sectorIndex];
+                lensData[idx] = mode.real;
+                lensData[idx + 1] = mode.imag;
+            } else {
+                lensData[idx] = 1.0;
+                lensData[idx + 1] = 0.0;
+            }
+            lensData[idx + 2] = 0.0;
+            lensData[idx + 3] = 1.0;
+        }
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, lensTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 
+        config.gridSize, config.gridSize, 0, 
+        gl.RGBA, gl.FLOAT, lensData);
+}
+
+function cacheUniformLocations() {
+    // Clear existing locations
+    uniformLocations = {
+        simulation: {},
+        display: {}
+    };
+
+    // Cache simulation uniforms
+    gl.useProgram(simulationProgram);
+    const simUniforms = [
+        'u_dt', 'u_dx', 'u_damping', 'u_c', 'u_n2', 'u_Isat', 'u_chi', 
+        'u_resolution', 'u_boundaryR0', 'u_boundaryAlpha', 'u_boundaryM',
+        'u_updateTarget', 'u_current', 'u_previous', 'u_lens', 'u_fundamental'
+    ];
+    
+    simUniforms.forEach(name => {
+        const location = gl.getUniformLocation(simulationProgram, name);
+        if (location === null) {
+            console.warn(`Couldn't find simulation uniform: ${name}`);
+        }
+        uniformLocations.simulation[name] = location;
+    });
+    
+    // Cache display uniforms
+    gl.useProgram(displayProgram);
+    const displayUniforms = [
+        'u_field',
+        'u_isLens',
+        'u_lensDisplayMin',
+        'u_lensDisplayMax',
+        'u_lensRadius',
+        'u_resolution'
+    ];
+    
+    displayUniforms.forEach(name => {
+        const location = gl.getUniformLocation(displayProgram, name);
+        if (location === null) {
+            console.warn(`Couldn't find display uniform: ${name}`);
+        }
+        uniformLocations.display[name] = location;
+    });
+}
+
+function readFieldData() {
+    const centerX = Math.floor(config.gridSize / 2);
+    const centerY = Math.floor(config.gridSize / 2);
+    const startX = centerX - readbackWidth/2;
+    const startY = centerY - readbackHeight/2;
+    
+    // Read fundamental field
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fundamentalFramebuffers[current]);
+    gl.readPixels(
+        startX, startY,
+        readbackWidth, readbackHeight,
+        gl.RGBA, gl.FLOAT,
+        readbackBuffer
+    );
+    const fundamentalData = new Float32Array(readbackBuffer);
+    
+    // Read SHG field
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shgFramebuffers[current]);
+    gl.readPixels(
+        startX, startY,
+        readbackWidth, readbackHeight,
+        gl.RGBA, gl.FLOAT,
+        readbackBuffer
+    );
+    const shgData = new Float32Array(readbackBuffer);
+    
+    return { fundamentalData, shgData };
+}
+
+function updateLens() {
+    const { fundamentalData, shgData } = readFieldData();
+
+    // Reset accumulation arrays
+    for(let i = 0; i < config.fresnelZones; i++) {
+        for(let j = 0; j < config.numSectors; j++) {
+            intensityRatios[i][j] = 0;
+            phaseDiffs[i][j] = 0;
+            modeCount[i][j] = 0;
+        }
+    }
+
+    const centerOffset = readbackWidth/2;
+    
+    // Accumulate measurements
+    for (let y = 0; y < readbackHeight; y++) {
+        for (let x = 0; x < readbackWidth; x++) {
+            const dx = x - centerOffset;
+            const dy = y - centerOffset;
+            const r = Math.sqrt(dx*dx + dy*dy);
+            
+            if (r <= config.lensRadius) {
+                const idx = (y * readbackWidth + x) * 4;
+                
+                const fundReal = fundamentalData[idx];
+                const fundImag = fundamentalData[idx + 1];
+                const fundIntensity = fundReal*fundReal + fundImag*fundImag;
+                
+                const shgReal = shgData[idx];
+                const shgImag = shgData[idx + 1];
+                const shgIntensity = shgReal*shgReal + shgImag*shgImag;
+                
+                const fundPhase = Math.atan2(fundImag, fundReal);
+                const shgPhase = Math.atan2(shgImag, shgReal);
+                let phaseDiff = shgPhase - 2*fundPhase;
+                while (phaseDiff > Math.PI) phaseDiff -= 2*Math.PI;
+                while (phaseDiff < -Math.PI) phaseDiff += 2*Math.PI;
+
+                const zoneIndex = Math.floor((r/config.lensRadius) * config.fresnelZones);
+                if (zoneIndex < 0 || zoneIndex >= config.fresnelZones) continue;
+
+                let theta = Math.atan2(dy, dx);
+                let sectorIndex = Math.floor((theta + Math.PI)/(2*Math.PI/config.numSectors));
+                if (sectorIndex < 0 || sectorIndex >= config.numSectors) continue;
+
+                const intensityRatio = fundIntensity > 1e-10 ? 
+                    Math.min(shgIntensity/fundIntensity, 10) : 0;
+                
+                intensityRatios[zoneIndex][sectorIndex] += intensityRatio;
+                phaseDiffs[zoneIndex][sectorIndex] += phaseDiff;
+                modeCount[zoneIndex][sectorIndex]++;
+            }
+        }
+    }
+
+    // Update lens modes using Adam optimizer
+    adamState.t += 1;
+    const bc1 = 1.0 / (1.0 - Math.pow(adamState.beta1, adamState.t));
+    const bc2 = 1.0 / (1.0 - Math.pow(adamState.beta2, adamState.t));
+
+    for (let z = 0; z < config.fresnelZones; z++) {
+        for (let s = 0; s < config.numSectors; s++) {
+            if (modeCount[z][s] > 0) {
+                const avgIntensityRatio = intensityRatios[z][s] / modeCount[z][s];
+                const avgPhaseDiff = phaseDiffs[z][s] / modeCount[z][s];
+
+                const magnitude = Math.tanh(avgIntensityRatio);
+                const updateReal = magnitude * Math.cos(avgPhaseDiff);
+                const updateImag = magnitude * Math.sin(avgPhaseDiff);
+
+                // Update momentum estimates
+                adamState.m_real[z][s] = adamState.beta1 * adamState.m_real[z][s] +
+                    (1 - adamState.beta1) * updateReal;
+                adamState.v_real[z][s] = adamState.beta2 * adamState.v_real[z][s] +
+                    (1 - adamState.beta2) * updateReal * updateReal;
+
+                adamState.m_imag[z][s] = adamState.beta1 * adamState.m_imag[z][s] +
+                    (1 - adamState.beta1) * updateImag;
+                adamState.v_imag[z][s] = adamState.beta2 * adamState.v_imag[z][s] +
+                    (1 - adamState.beta2) * updateImag * updateImag;
+
+                // Compute bias-corrected estimates
+                const m_real_hat = adamState.m_real[z][s] * bc1;
+                const v_real_hat = adamState.v_real[z][s] * bc2;
+                const m_imag_hat = adamState.m_imag[z][s] * bc1;
+                const v_imag_hat = adamState.v_imag[z][s] * bc2;
+
+                // Update lens modes
+                lensModes[z][s].real += config.learningRate * m_real_hat / 
+                    (Math.sqrt(v_real_hat) + adamState.epsilon);
+                lensModes[z][s].imag += config.learningRate * m_imag_hat / 
+                    (Math.sqrt(v_imag_hat) + adamState.epsilon);
+            }
+        }
+    }
+
+    updateLensTexture();
+}
+
+function updateLensStatistics() {
+    const width = config.gridSize;
+    const height = config.gridSize;
+    const centerX = Math.floor(width / 2);
+    const centerY = Math.floor(height / 2);
+    
+    // Read lens data
+    const lensData = new Float32Array(width * height * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, readbackFramebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lensTexture, 0);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, lensData);
+
+    // Gather amplitude values within lens radius
+    let values = [];
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const r = Math.sqrt(dx*dx + dy*dy);
+            
+            if (r <= config.lensRadius) {
+                const idx = (y * width + x) * 4;
+                const LR = lensData[idx];
+                const LI = lensData[idx + 1];
+                const amp = Math.sqrt(LR*LR + LI*LI);
+                values.push(amp);
+            }
+        }
+    }
+
+    // Calculate statistics
+    values.sort((a, b) => a - b);
+    const q25 = values[Math.floor(values.length * 0.25)] || 0;
+    const q75 = values[Math.floor(values.length * 0.75)] || 1;
+    const iqr = q75 - q25;
+    
+    lensStatistics = {
+        q25,
+        q75,
+        displayMin: Math.max(0, q25 - 1.5 * iqr),
+        displayMax: q75 + 1.5 * iqr
+    };
+}
+
+function render() {
+    // Set up common vertex attributes
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    const positionLoc = gl.getAttribLocation(simulationProgram, 'position');
+    gl.enableVertexAttribArray(positionLoc);
+    gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // Update fundamental field
+    gl.useProgram(simulationProgram);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fundamentalFramebuffers[next]);
+    
+    // Set simulation uniforms
+    gl.uniform1f(uniformLocations.simulation.u_dt, config.dt);
+    gl.uniform1f(uniformLocations.simulation.u_dx, config.dx);
+    gl.uniform1f(uniformLocations.simulation.u_damping, config.damping);
+    gl.uniform1f(uniformLocations.simulation.u_c, config.c);
+    gl.uniform1f(uniformLocations.simulation.u_n2, config.n2);
+    gl.uniform1f(uniformLocations.simulation.u_Isat, config.Isat);
+    gl.uniform1f(uniformLocations.simulation.u_chi, config.chi);
+    gl.uniform2f(uniformLocations.simulation.u_resolution, config.gridSize, config.gridSize);
+    gl.uniform1f(uniformLocations.simulation.u_boundaryR0, config.boundaryR0);
+    gl.uniform1f(uniformLocations.simulation.u_boundaryAlpha, config.boundaryAlpha);
+    gl.uniform1f(uniformLocations.simulation.u_boundaryM, config.boundaryM);
+    gl.uniform1i(uniformLocations.simulation.u_updateTarget, 0);
+
+    // Bind textures for fundamental field update
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fundamentalTextures[current]);
+    gl.uniform1i(uniformLocations.simulation.u_current, 0);
+    
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, fundamentalTextures[previous]);
+    gl.uniform1i(uniformLocations.simulation.u_previous, 1);
+    
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, lensTexture);
+    gl.uniform1i(uniformLocations.simulation.u_lens, 2);
+    
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Update SHG field
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shgFramebuffers[next]);
+    gl.uniform1i(uniformLocations.simulation.u_updateTarget, 1);
+    
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, shgTextures[current]);
+    gl.uniform1i(uniformLocations.simulation.u_current, 0);
+    
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, shgTextures[previous]);
+    gl.uniform1i(uniformLocations.simulation.u_previous, 1);
+    
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, fundamentalTextures[next]);
+    gl.uniform1i(uniformLocations.simulation.u_fundamental, 3);
+    
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // Update lens statistics if needed
+    if (document.getElementById('showLens').checked) {
+        console.log("Showing lens");
+        console.log("Lens radius:", config.lensRadius);
+        console.log("Resolution:", config.gridSize);
+        
+        gl.uniform1i(uniformLocations.display.isLens, 1);  // Make sure we're using 1, not true
+        gl.uniform1f(uniformLocations.display.lensRadius, config.lensRadius);
+        gl.uniform2f(uniformLocations.display.resolution, config.gridSize, config.gridSize);
+    }
+
+    // Display
+    gl.useProgram(displayProgram);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    
+    // Calculate display scaling and offset
+    const scale = Math.min(
+        gl.canvas.width / config.gridSize,
+        gl.canvas.height / config.gridSize
+    );
+    const offsetX = (gl.canvas.width - config.gridSize * scale) / (2 * gl.canvas.width);
+    const offsetY = (gl.canvas.height - config.gridSize * scale) / (2 * gl.canvas.height);
+    
+    // Set display uniforms
+    gl.uniform2f(uniformLocations.display.displayOffset, offsetX, offsetY);
+    gl.uniform1f(uniformLocations.display.scale, scale);
+    gl.uniform2f(uniformLocations.display.resolution, gl.canvas.width, gl.canvas.height);
+    gl.uniform2f(uniformLocations.display.simResolution, config.gridSize, config.gridSize);
+    gl.uniform1f(uniformLocations.display.boundaryR0, config.boundaryR0);
+    gl.uniform1f(uniformLocations.display.boundaryAlpha, config.boundaryAlpha);
+    gl.uniform1f(uniformLocations.display.boundaryM, config.boundaryM);
+    
+    // Bind appropriate texture based on display mode
+    gl.activeTexture(gl.TEXTURE0);
+    if (document.getElementById('showSHG').checked) {
+        gl.bindTexture(gl.TEXTURE_2D, shgTextures[next]);
+    } else if (document.getElementById('showLens').checked) {
+        gl.bindTexture(gl.TEXTURE_2D, lensTexture);
+    } else {
+        gl.bindTexture(gl.TEXTURE_2D, fundamentalTextures[next]);
+    }
+    gl.uniform1i(uniformLocations.display.field, 0);
+    
+    const displayPosLoc = gl.getAttribLocation(displayProgram, 'position');
+    gl.enableVertexAttribArray(displayPosLoc);
+    gl.vertexAttribPointer(displayPosLoc, 2, gl.FLOAT, false, 0, 0);
+    
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function animate() {
+    render();
+
+    if (frameCount % config.optimizationInterval === 0) {
+        updateLens();
+    }
+
+    [previous, current, next] = [current, next, previous];
+    
+    frameCount++;
+    requestAnimationFrame(animate);
+}
+
+// Start the application
+initialize().then(() => {
+    console.log("Starting animation...");
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+    animate();
+}).catch(error => {
+    console.error("Application failed to start:", error);
+    document.getElementById('debugText').textContent = "Application failed to start: " + error.message;
+});
+
+</script>
+</body>
+</html>
