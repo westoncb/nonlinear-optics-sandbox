@@ -1,16 +1,16 @@
 export class Config {
   constructor() {
     // Core simulation parameters
-    this.dt = 0.4;
+    this.dt = 0.3;
     this.dx = 1;
     this.gridSize = 512;
     this.damping = 1.0;
     this.c = 1.0;
 
     // Nonlinear parameters
-    this.n2 = 1.1;
-    this.Isat = 0.1;
-    this.chi = 0.1;
+    this.n2 = 1.2;
+    this.Isat = 0.15;
+    this.chi = 0.08;
 
     // Boundary parameters
     this.boundaryAlpha = 0.1;
@@ -23,8 +23,8 @@ export class Config {
     this.numSectors = 2000;
 
     // Optimization parameters
-    this.learningRate = 0.00001;
-    this.optimizationInterval = 1;
+    this.learningRate = 0.000008;
+    this.optimizationInterval = 10;
 
     // Calculate derived values
     this.updateDerivedValues();
