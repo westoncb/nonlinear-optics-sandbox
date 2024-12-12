@@ -5,30 +5,36 @@ export const constants = {
 export class Config {
   constructor() {
     // Core simulation parameters
-    this.dt = 0.1;
-    this.dx = 1;
-    this.gridSize = 312;
-    this.damping = 0.9998;
-    this.c = 1.0;
+    this.dt = 0.35; // Slightly smaller timestep for stability
+    this.dx = 1.0; // Keep spatial discretization simple
+    this.gridSize = 512; // Larger domain for more complex pattern formation
+    this.damping = 0.9999; // Slight damping to avoid unbounded growth but still allow some wave action
+    this.c = 1.0; // Base wave speed
 
     // Nonlinear parameters
-    this.n2 = 2.5;
-    this.Isat = 0.35;
-    this.chi = 1.25;
+    this.n2 = 2.0; // Increased nonlinear index for stronger self-focusing
+    this.Isat = 0.25; // Slightly lower saturation intensity to see nonlinear effects kick in earlier
+    this.chi = 0.7; // Stronger second-harmonic generation coefficient to amplify nonlinear interactions
 
     // Boundary parameters
-    this.boundaryAlpha = 0.25;
-    this.boundaryM = 8;
-    this.margin = 8;
+    this.boundaryAlpha = 0.4; // More pronounced boundary shaping
+    this.boundaryM = 10; // Higher mode boundary modulation
+    this.margin = 10; // A bit more margin for boundary conditions
 
     // Lens parameters
-    this.lensRadius = 24;
-    this.fresnelZones = 24;
-    this.numSectors = 200;
+    this.lensRadius = 60; // Larger lens radius for more intricate focusing patterns
+    this.fresnelZones = 32; // More zones for finer radial control
+    this.numSectors = 1800; // Higher angular resolution to produce complex angular patterns
+    this.hillPower = 1.5; // Slightly increased hill power for a more nuanced logistic weighting
+    this.updateStrategy = "o1OptimalStrategy2"; // Using the PDE-informed strategy
 
     // Optimization parameters
-    this.learningRate = 0.00001;
-    this.optimizationInterval = 1;
+    this.learningRate = 0.00004; // Slightly higher learning rate for more dynamic lens updates
+    this.optimizationInterval = 1; // Keep frequent updates to lens modes
+
+    // Initial pulse parameters
+    this.initialPulseAmplitude = 30; // Strong initial field, but not too high
+    this.initialPulsePhaseShift = 0.7; // Non-zero phase shift to create interesting initial conditions
 
     // Calculate derived values
     this.updateDerivedValues();
