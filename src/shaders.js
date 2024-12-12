@@ -43,7 +43,7 @@ bool insideBoundary(vec2 pos) {
 void main() {
     vec2 pos = gl_FragCoord.xy;
     vec2 texel = 1.0 / u_resolution;
-    
+
     if (!insideBoundary(pos)) {
         vec4 current = texture(u_current, pos * texel);
         fragColor = vec4(-current.xy, 0.0, 1.0);
@@ -59,7 +59,7 @@ void main() {
     vec4 lens = texture(u_lens, pos * texel);
 
     vec2 laplacianRaw = (left.xy + right.xy + up.xy + down.xy - 4.0 * center.xy) / (u_dx * u_dx);
-    
+
     vec2 lensedLaplacian = vec2(
         laplacianRaw.x * lens.x - laplacianRaw.y * lens.y,
         laplacianRaw.x * lens.y + laplacianRaw.y * lens.x
@@ -69,59 +69,32 @@ void main() {
         // Fundamental field update
         float amp2 = dot(center.xy, center.xy);
         float local_c2 = u_c * u_c * (1.0 + (u_n2 * amp2) / (1.0 + amp2/u_Isat));
-        
+
         vec2 new_val = (2.0 * center.xy - old.xy + local_c2 * u_dt * u_dt * lensedLaplacian) * u_damping;
         fragColor = vec4(new_val, 0.0, 1.0);
     } else {
         // SHG field update
         float shg_amp2 = dot(center.xy, center.xy);
         float local_c2 = u_c * u_c * (1.0 + (u_n2 * shg_amp2) / (1.0 + shg_amp2/u_Isat));
-        
+
         vec4 fund = texture(u_fundamental, pos * texel);
         float fund_amp2 = dot(fund.xy, fund.xy);
         float saturationFactor = 1.0 / (1.0 + fund_amp2/u_Isat);
         vec2 sourceTerm = vec2(u_chi * fund_amp2 * saturationFactor, 0.0);
-        
-        vec2 new_val = (2.0 * center.xy - old.xy + 
-                      local_c2 * u_dt * u_dt * lensedLaplacian + 
+
+        vec2 new_val = (2.0 * center.xy - old.xy +
+                      local_c2 * u_dt * u_dt * lensedLaplacian +
                       u_dt * u_dt * sourceTerm) * u_damping;
         fragColor = vec4(new_val, 0.0, 1.0);
     }
 }`;
 
-// Display shader for main wave field and SHG
-export const fieldDisplayShaderSource = `#version 300 es
+export const displayShaderSource = `#version 300 es
 precision highp float;
 precision highp sampler2D;
 
 uniform sampler2D u_field;
-in vec2 uv;
-out vec4 fragColor;
-
-vec3 hsv2rgb(vec3 c) {
-    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
-}
-
-void main() {
-    vec4 field = texture(u_field, uv);
-    float amp = length(field.xy);
-    float phase = atan(field.y, field.x);
-    
-    float hue = (phase + 3.14159) / 6.28318;
-    float sat = 1.0;
-    float val = amp / (1.0 + amp);
-    
-    fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
-}`;
-
-// Display shader for lens visualization
-export const lensDisplayShaderSource = `#version 300 es
-precision highp float;
-precision highp sampler2D;
-
-uniform sampler2D u_field;
+uniform int u_displayMode;  // 0 = wave, 1 = shg, 2 = lens
 uniform float u_lensDisplayMin;
 uniform float u_lensDisplayMax;
 uniform float u_lensRadius;
@@ -137,27 +110,44 @@ vec3 hsv2rgb(vec3 c) {
 }
 
 void main() {
-    vec2 center = vec2(0.5, 0.5);
-    vec2 fromCenter = uv - center;
-    float r = length(fromCenter * u_resolution);
-    
-    if (r <= u_lensRadius) {
+  if (u_displayMode == 2) {  // Lens display
+      vec2 center = vec2(0.5, 0.5);
+      vec2 fromCenter = uv - center;
+
+      // Scale our sampling coordinates to only look within the lens radius
+      vec2 scaledUV = center + fromCenter * (u_lensRadius / (u_resolution.x * 0.5));
+
+      // Check if we're outside the canvas
+      if (scaledUV.x < 0.0 || scaledUV.x > 1.0 ||
+          scaledUV.y < 0.0 || scaledUV.y > 1.0) {
+          fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+          return;
+      }
+
+      vec4 field = texture(u_field, scaledUV);
+      float amp = length(field.xy);
+      float phase = atan(field.y, field.x);
+
+      float normAmp = clamp(
+          (amp - u_lensDisplayMin) / (u_lensDisplayMax - u_lensDisplayMin),
+          0.0, 1.0
+      );
+
+      float gamma = 0.4;
+      float val = pow(normAmp, gamma);
+      float hue = (phase + 3.14159) / 6.28318;
+      float sat = 1.0;
+
+      fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
+  } else {  // Wave or SHG display
         vec4 field = texture(u_field, uv);
         float amp = length(field.xy);
         float phase = atan(field.y, field.x);
-        
-        float normAmp = clamp(
-            (amp - u_lensDisplayMin) / (u_lensDisplayMax - u_lensDisplayMin),
-            0.0, 1.0
-        );
-        
-        float gamma = 0.4;
-        float val = pow(normAmp, gamma);
+
         float hue = (phase + 3.14159) / 6.28318;
         float sat = 1.0;
-        
+        float val = amp / (1.0 + amp);
+
         fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
-    } else {
-        fragColor = vec4(0.0, 0.0, 0.0, 1.0);
     }
 }`;

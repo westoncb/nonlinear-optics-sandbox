@@ -1,30 +1,34 @@
+export const constants = {
+  PREVIEW_SIZE: 200,
+};
+
 export class Config {
   constructor() {
     // Core simulation parameters
-    this.dt = 0.3;
+    this.dt = 0.1;
     this.dx = 1;
-    this.gridSize = 512;
-    this.damping = 1.0;
+    this.gridSize = 312;
+    this.damping = 0.9998;
     this.c = 1.0;
 
     // Nonlinear parameters
-    this.n2 = 1.2;
-    this.Isat = 0.15;
-    this.chi = 0.08;
+    this.n2 = 2.5;
+    this.Isat = 0.35;
+    this.chi = 1.25;
 
     // Boundary parameters
-    this.boundaryAlpha = 0.1;
-    this.boundaryM = 4;
-    this.margin = 30;
+    this.boundaryAlpha = 0.25;
+    this.boundaryM = 8;
+    this.margin = 8;
 
     // Lens parameters
-    this.lensRadius = 120;
-    this.fresnelZones = 1000;
-    this.numSectors = 2000;
+    this.lensRadius = 24;
+    this.fresnelZones = 24;
+    this.numSectors = 200;
 
     // Optimization parameters
-    this.learningRate = 0.000008;
-    this.optimizationInterval = 10;
+    this.learningRate = 0.00001;
+    this.optimizationInterval = 1;
 
     // Calculate derived values
     this.updateDerivedValues();

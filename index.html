@@ -3,72 +3,9 @@
     <head>
         <meta charset="UTF-8" />
         <title>FDTD Wave Simulation with SHG</title>
-        <style>
-            body {
-                background: #222;
-                margin: 0;
-                overflow: hidden;
-                font-family: sans-serif;
-                color: #eee;
-            }
-            #topBar {
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                background: #333;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 10px;
-                box-sizing: border-box;
-                height: 200px;
-                z-index: 9999;
-            }
-            #controls {
-                flex: 1;
-                color: #eee;
-                padding: 0 20px;
-            }
-            .status-panel {
-                border: 1px solid #444;
-                padding: 8px;
-                border-radius: 4px;
-                background: #2a2a2a;
-                width: 300px;
-            }
-            .status-panel h3 {
-                margin: 0 0 8px 0;
-                font-size: 0.9em;
-                color: #aaa;
-            }
-            #lensCanvas,
-            #shgCanvas {
-                width: 200px;
-                height: 200px;
-                border: 1px solid #aaa;
-                background: #000;
-                margin: 0 20px;
-            }
-            #waveCanvas {
-                position: absolute;
-                top: 200px;
-                left: 0;
-            }
-        </style>
     </head>
     <body>
-        <div id="topBar">
-            <div id="controls">
-                <div class="status-panel">
-                    <h3>Simulation Status</h3>
-                    <div id="statusDisplay"></div>
-                </div>
-            </div>
-            <canvas id="lensCanvas" width="200" height="200"></canvas>
-            <canvas id="shgCanvas" width="200" height="200"></canvas>
-        </div>
-        <canvas id="waveCanvas"></canvas>
-        <script type="module" src="/src/app.js"></script>
+        <div id="root"></div>
+        <script type="module" src="/src/main.jsx"></script>
     </body>
 </html>

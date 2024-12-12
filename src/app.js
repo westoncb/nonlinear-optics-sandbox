@@ -1,48 +1,72 @@
-import { Config } from "./config.js";
+import { Config, constants } from "./config.js";
 import { Simulation } from "./simulation.js";
 import { webgl, stats, scaleDataForDisplay } from "./util.js";
 import {
   vertexShaderSource,
   simulationShaderSource,
-  fieldDisplayShaderSource,
-  lensDisplayShaderSource,
+  displayShaderSource,
 } from "./shaders.js";
+
+const DisplayMode = {
+  FUNDAMENTAL: 0,
+  SHG: 1,
+  LENS: 2,
+};
 
 export class App {
   constructor() {
     this.config = new Config();
     this.simulation = new Simulation(this.config);
 
-    // WebGL contexts
-    this.mainGL = null;
-    this.lensGL = null;
-    this.shgGL = null;
+    // GL contexts
+    // mainGL for simulation AND primary display:
+    const mainCanvas = document.getElementById("primaryCanvas");
+    this.mainGL = mainCanvas.getContext("webgl2");
+    if (!this.mainGL)
+      throw new Error("WebGL 2 not available for primaryCanvas");
+
+    const preview1Canvas = document.getElementById("preview1Canvas");
+    this.preview1GL = preview1Canvas.getContext("webgl2");
+    if (!this.preview1GL)
+      throw new Error("WebGL 2 not available for preview1Canvas");
+
+    const preview2Canvas = document.getElementById("preview2Canvas");
+    this.preview2GL = preview2Canvas.getContext("webgl2");
+    if (!this.preview2GL)
+      throw new Error("WebGL 2 not available for preview2Canvas");
+
+    [this.mainGL, this.preview1GL, this.preview2GL].forEach((gl) => {
+      const ext = gl.getExtension("EXT_color_buffer_float");
+      if (!ext) throw new Error("EXT_color_buffer_float not available");
+    });
 
     // Programs
+    // Simulation in mainGL
     this.programs = {
       simulation: null,
-      fieldDisplay: null,
-      lensDisplay: null,
-      shgDisplay: null,
+      primaryDisplay: null, // display in mainGL
+      preview1Display: null, // display in preview1GL
+      preview2Display: null, // display in preview2GL
     };
 
-    // Textures and framebuffers
+    // Simulation textures and framebuffers
     this.fundamentalTextures = [];
     this.fundamentalFramebuffers = [];
     this.shgTextures = [];
     this.shgFramebuffers = [];
     this.lensTexture = null;
 
-    // Additional display textures
-    this.shgDisplayTexture = null;
-    this.lensDisplayTexture = null;
+    // Display textures (reused each frame)
+    // For primary (mainGL), we can render directly from simulation textures—no extra texture needed.
+    this.preview1Texture = null;
+    this.preview2Texture = null;
 
     // Uniform locations
     this.uniformLocations = {
       simulation: {},
-      fieldDisplay: {},
-      lensDisplay: {},
-      shgDisplay: {},
+      primaryDisplay: {},
+      preview1Display: {},
+      preview2Display: {},
     };
 
     // Animation state
@@ -52,31 +76,41 @@ export class App {
     this.next = 1;
 
     // Readback buffers
-    this.readbackBuffer = null;
-    this.shgDisplayBuffer = null;
-    this.lensDisplayBuffer = null;
+    this.readbackBuffer = new Float32Array(
+      this.config.gridSize * this.config.gridSize * 4,
+    );
+    this.shgDisplayBuffer = new Float32Array(
+      this.config.gridSize * this.config.gridSize * 4,
+    );
+    this.lensDisplayBuffer = new Float32Array(
+      this.config.gridSize * this.config.gridSize * 4,
+    );
 
-    // Lens statistics
+    // Lens stats
     this.lensStatistics = {
       displayMin: 0,
       displayMax: 1,
     };
 
-    // Quad buffers for each context
+    // Quad buffers
     this.quadBuffers = {
       main: null,
-      lens: null,
-      shg: null,
+      preview1: null,
+      preview2: null,
+    };
+
+    this.displayModes = {
+      primary: DisplayMode.FUNDAMENTAL,
+      preview1: DisplayMode.LENS,
+      preview2: DisplayMode.SHG,
     };
   }
 
   async initialize() {
     try {
-      await this.initWebGL();
-      await this.initShaders();
-      await this.initBuffers();
-      await this.initTextures();
-      this.initEvents();
+      this.initShaders();
+      this.initBuffers();
+      this.initTextures();
       console.log("Initialization complete");
       return true;
     } catch (error) {
@@ -87,61 +121,38 @@ export class App {
     }
   }
 
-  async initWebGL() {
-    // Initialize main canvas
-    const mainCanvas = document.getElementById("waveCanvas");
-    this.mainGL = mainCanvas.getContext("webgl2");
-    if (!this.mainGL) throw new Error("WebGL 2 not available for main canvas");
-
-    // Initialize lens canvas
-    const lensCanvas = document.getElementById("lensCanvas");
-    this.lensGL = lensCanvas.getContext("webgl2");
-    if (!this.lensGL) throw new Error("WebGL 2 not available for lens canvas");
-
-    // Initialize SHG canvas
-    const shgCanvas = document.getElementById("shgCanvas");
-    this.shgGL = shgCanvas.getContext("webgl2");
-    if (!this.shgGL) throw new Error("WebGL 2 not available for SHG canvas");
-
-    // Check for required extensions
-    [this.mainGL, this.lensGL, this.shgGL].forEach((gl) => {
-      const ext = gl.getExtension("EXT_color_buffer_float");
-      if (!ext) throw new Error("EXT_color_buffer_float not available");
-    });
-
-    this.handleResize();
-  }
-
-  async initShaders() {
-    // Create programs for each context
+  initShaders() {
+    // Simulation
     this.programs.simulation = webgl.createProgram(
       this.mainGL,
       vertexShaderSource,
       simulationShaderSource,
     );
 
-    this.programs.fieldDisplay = webgl.createProgram(
+    // Display
+    this.programs.primaryDisplay = webgl.createProgram(
       this.mainGL,
       vertexShaderSource,
-      fieldDisplayShaderSource,
+      displayShaderSource,
     );
 
-    this.programs.shgDisplay = webgl.createProgram(
-      this.shgGL,
+    this.programs.preview1Display = webgl.createProgram(
+      this.preview1GL,
       vertexShaderSource,
-      fieldDisplayShaderSource,
+      displayShaderSource,
     );
 
-    this.programs.lensDisplay = webgl.createProgram(
-      this.lensGL,
+    this.programs.preview2Display = webgl.createProgram(
+      this.preview2GL,
       vertexShaderSource,
-      lensDisplayShaderSource,
+      displayShaderSource,
     );
 
     this.cacheUniformLocations();
   }
 
   cacheUniformLocations() {
+    // Simulation uniforms
     const simUniforms = [
       "u_dt",
       "u_dx",
@@ -160,94 +171,73 @@ export class App {
       "u_lens",
       "u_fundamental",
     ];
-
     this.mainGL.useProgram(this.programs.simulation);
     simUniforms.forEach((name) => {
-      const location = this.mainGL.getUniformLocation(
+      const loc = this.mainGL.getUniformLocation(
         this.programs.simulation,
         name,
       );
-      if (location === null) {
-        console.warn(`Couldn't find simulation uniform: ${name}`);
-      }
-      this.uniformLocations.simulation[name] = location;
+      this.uniformLocations.simulation[name] = loc;
     });
 
-    const fieldUniforms = ["u_field"];
-
-    // Field display (main)
-    this.mainGL.useProgram(this.programs.fieldDisplay);
-    fieldUniforms.forEach((name) => {
-      const location = this.mainGL.getUniformLocation(
-        this.programs.fieldDisplay,
-        name,
-      );
-      if (location === null) {
-        console.warn(`Couldn't find field display uniform: ${name}`);
-      }
-      this.uniformLocations.fieldDisplay[name] = location;
-    });
-
-    // SHG display
-    this.shgGL.useProgram(this.programs.shgDisplay);
-    fieldUniforms.forEach((name) => {
-      const location = this.shgGL.getUniformLocation(
-        this.programs.shgDisplay,
-        name,
-      );
-      if (location === null) {
-        console.warn(`Couldn't find SHG display uniform: ${name}`);
-      }
-      this.uniformLocations.shgDisplay[name] = location;
-    });
-
-    const lensUniforms = [
+    const displayUniforms = [
       "u_field",
+      "u_displayMode",
       "u_lensDisplayMin",
       "u_lensDisplayMax",
       "u_lensRadius",
       "u_resolution",
     ];
 
-    this.lensGL.useProgram(this.programs.lensDisplay);
-    lensUniforms.forEach((name) => {
-      const location = this.lensGL.getUniformLocation(
-        this.programs.lensDisplay,
-        name,
-      );
-      if (location === null) {
-        console.warn(`Couldn't find lens display uniform: ${name}`);
-      }
-      this.uniformLocations.lensDisplay[name] = location;
+    // Primary (mainGL)
+    this.mainGL.useProgram(this.programs.primaryDisplay);
+    displayUniforms.forEach((name) => {
+      this.uniformLocations.primaryDisplay[name] =
+        this.mainGL.getUniformLocation(this.programs.primaryDisplay, name);
+    });
+
+    // Preview1
+    this.preview1GL.useProgram(this.programs.preview1Display);
+    displayUniforms.forEach((name) => {
+      this.uniformLocations.preview1Display[name] =
+        this.preview1GL.getUniformLocation(this.programs.preview1Display, name);
+    });
+
+    // Preview2
+    this.preview2GL.useProgram(this.programs.preview2Display);
+    displayUniforms.forEach((name) => {
+      this.uniformLocations.preview2Display[name] =
+        this.preview2GL.getUniformLocation(this.programs.preview2Display, name);
     });
   }
 
-  async initBuffers() {
-    // Create quad buffers for each context
+  initBuffers() {
     this.quadBuffers.main = this.createQuadBuffer(this.mainGL);
-    this.quadBuffers.lens = this.createQuadBuffer(this.lensGL);
-    this.quadBuffers.shg = this.createQuadBuffer(this.shgGL);
+    this.quadBuffers.preview1 = this.createQuadBuffer(this.preview1GL);
+    this.quadBuffers.preview2 = this.createQuadBuffer(this.preview2GL);
 
-    // Set up attributes for each program now that we have quad buffers
+    // Simulation attributes
     this.setupProgramAttributes(
       this.mainGL,
       this.programs.simulation,
       this.quadBuffers.main,
     );
+
+    // Display attributes
     this.setupProgramAttributes(
       this.mainGL,
-      this.programs.fieldDisplay,
+      this.programs.primaryDisplay,
       this.quadBuffers.main,
     );
     this.setupProgramAttributes(
-      this.shgGL,
-      this.programs.shgDisplay,
-      this.quadBuffers.shg,
+      this.preview1GL,
+      this.programs.preview1Display,
+      this.quadBuffers.preview1,
     );
     this.setupProgramAttributes(
-      this.lensGL,
-      this.programs.lensDisplay,
-      this.quadBuffers.lens,
+      this.preview2GL,
+      this.programs.preview2Display,
+      this.quadBuffers.preview2,
     );
   }
 
@@ -272,8 +262,8 @@ export class App {
     }
   }
 
-  async initTextures() {
-    // Main context textures (for simulation)
+  initTextures() {
+    // Simulation textures
     this.fundamentalTextures = [
       webgl.createTexture(
         this.mainGL,
@@ -291,9 +281,8 @@ export class App {
         this.config.gridSize,
       ),
     ];
-
-    this.fundamentalFramebuffers = this.fundamentalTextures.map((texture) =>
-      webgl.createFramebuffer(this.mainGL, texture),
+    this.fundamentalFramebuffers = this.fundamentalTextures.map((t) =>
+      webgl.createFramebuffer(this.mainGL, t),
     );
 
     this.shgTextures = [
@@ -313,9 +302,8 @@ export class App {
         this.config.gridSize,
       ),
     ];
-
-    this.shgFramebuffers = this.shgTextures.map((texture) =>
-      webgl.createFramebuffer(this.mainGL, texture),
+    this.shgFramebuffers = this.shgTextures.map((t) =>
+      webgl.createFramebuffer(this.mainGL, t),
     );
 
     this.lensTexture = webgl.createTexture(
@@ -324,16 +312,18 @@ export class App {
       this.config.gridSize,
     );
 
-    // Display textures
-    this.shgDisplayTexture = webgl.createTexture(this.shgGL, 200, 200);
-    this.lensDisplayTexture = webgl.createTexture(this.lensGL, 200, 200);
-
-    // Initialize readback buffers
-    this.readbackBuffer = new Float32Array(
-      this.config.gridSize * this.config.gridSize * 4,
+    // Display textures for previews
+    // We'll allocate them once and reuse them by calling texSubImage2D each frame
+    this.preview1Texture = webgl.createTexture(
+      this.preview1GL,
+      this.config.gridSize,
+      this.config.gridSize,
     );
-    this.shgDisplayBuffer = new Float32Array(200 * 200 * 4);
-    this.lensDisplayBuffer = new Float32Array(200 * 200 * 4);
+    this.preview2Texture = webgl.createTexture(
+      this.preview2GL,
+      this.config.gridSize,
+      this.config.gridSize,
+    );
 
     this.initializeFields();
   }
@@ -349,18 +339,17 @@ export class App {
     const centerX = Math.floor(this.config.gridSize / 2);
     const centerY = Math.floor(this.config.gridSize / 2);
 
-    // Initialize fundamental field with gaussian pulse
     for (let j = -3; j <= 3; j++) {
       for (let i = -3; i <= 3; i++) {
         const x = centerX + i;
         const y = centerY + j;
         const idx = (y * this.config.gridSize + x) * 4;
-        fundamentalData[idx] = Math.exp(-(i * i + j * j) / 4) * 15;
+        fundamentalData[idx] = Math.exp(-(i * i + j * j) / 4) * 42;
         fundamentalData[idx + 1] = 0.0001;
       }
     }
 
-    // Upload initial data
+    // Upload initial fields
     this.fundamentalTextures.forEach((texture) => {
       this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, texture);
       this.mainGL.texImage2D(
@@ -403,7 +392,6 @@ export class App {
       texture,
       0,
     );
-
     gl.readPixels(
       0,
       0,
@@ -413,7 +401,6 @@ export class App {
       gl.FLOAT,
       this.readbackBuffer,
     );
-
     gl.deleteFramebuffer(fb);
     return this.readbackBuffer;
   }
@@ -423,7 +410,6 @@ export class App {
       this.config.gridSize,
       this.config.gridSize,
     );
-
     this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, this.lensTexture);
     this.mainGL.texImage2D(
       this.mainGL.TEXTURE_2D,
@@ -467,7 +453,6 @@ export class App {
         const dx = x - centerX;
         const dy = y - centerY;
         const r = Math.sqrt(dx * dx + dy * dy);
-
         if (r <= this.config.lensRadius) {
           const idx = (y * this.config.gridSize + x) * 4;
           const LR = lensData[idx];
@@ -484,34 +469,32 @@ export class App {
   }
 
   render() {
-    // Update simulation
-    this.mainGL.useProgram(this.programs.simulation);
+    // Simulation step
+    this.runSimulationStep();
 
-    // Fundamental field update
-    this.mainGL.bindFramebuffer(
-      this.mainGL.FRAMEBUFFER,
-      this.fundamentalFramebuffers[this.next],
-    );
-    this.setSimulationUniforms(0);
-    this.mainGL.drawArrays(this.mainGL.TRIANGLE_STRIP, 0, 4);
-
-    // SHG field update
-    this.mainGL.bindFramebuffer(
-      this.mainGL.FRAMEBUFFER,
-      this.shgFramebuffers[this.next],
-    );
-    this.setSimulationUniforms(1);
-    this.mainGL.drawArrays(this.mainGL.TRIANGLE_STRIP, 0, 4);
-
-    // Render displays
-    this.renderMainDisplay();
-    this.renderSHGDisplay();
-    this.renderLensDisplay();
-
-    // Update lens if needed
+    // Update lens occasionally
     if (this.frameCount % this.config.optimizationInterval === 0) {
       this.updateLens();
     }
+
+    // Render primary (no CPU readback if FUNDAMENTAL)
+    this.renderPrimary();
+
+    // Render previews (may involve CPU readback)
+    this.renderPreview(
+      this.preview1GL,
+      this.uniformLocations.preview1Display,
+      this.displayModes.preview1,
+      this.preview1Texture,
+      this.preview1CanvasSize(),
+    );
+    this.renderPreview(
+      this.preview2GL,
+      this.uniformLocations.preview2Display,
+      this.displayModes.preview2,
+      this.preview2Texture,
+      this.preview2CanvasSize(),
+    );
 
     // Cycle buffers
     [this.previous, this.current, this.next] = [
@@ -519,90 +502,21 @@ export class App {
       this.next,
       this.previous,
     ];
-
     this.frameCount++;
   }
 
-  renderMainDisplay() {
+  runSimulationStep() {
     const gl = this.mainGL;
-    gl.useProgram(this.programs.fieldDisplay);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.fundamentalTextures[this.next]);
-    gl.uniform1i(this.uniformLocations.fieldDisplay.u_field, 0);
+    gl.useProgram(this.programs.simulation);
+
+    // Fundamental update
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fundamentalFramebuffers[this.next]);
+    this.setSimulationUniforms(0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
 
-  renderSHGDisplay() {
-    // Bind the framebuffer that contains the SHG data
-    const gl = this.mainGL;
+    // SHG update
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.shgFramebuffers[this.next]);
-    gl.readPixels(
-      0,
-      0,
-      this.config.gridSize,
-      this.config.gridSize,
-      gl.RGBA,
-      gl.FLOAT,
-      this.readbackBuffer,
-    );
-
-    // Scale down the data for display
-    scaleDataForDisplay(
-      this.readbackBuffer,
-      this.config.gridSize,
-      this.shgDisplayBuffer,
-      200,
-    );
-
-    // Update and render the SHG display texture
-    const shgGL = this.shgGL;
-    shgGL.useProgram(this.programs.shgDisplay);
-    shgGL.activeTexture(shgGL.TEXTURE0);
-    shgGL.bindTexture(shgGL.TEXTURE_2D, this.shgDisplayTexture);
-    shgGL.texImage2D(
-      shgGL.TEXTURE_2D,
-      0,
-      shgGL.RGBA32F,
-      200,
-      200,
-      0,
-      shgGL.RGBA,
-      shgGL.FLOAT,
-      this.shgDisplayBuffer,
-    );
-    shgGL.uniform1i(this.uniformLocations.shgDisplay.u_field, 0);
-    shgGL.bindFramebuffer(shgGL.FRAMEBUFFER, null);
-    shgGL.drawArrays(shgGL.TRIANGLE_STRIP, 0, 4);
-  }
-
-  renderLensDisplay() {
-    // Scale the lens data for display (CPU -> lensDisplayBuffer)
-    scaleDataForDisplay(
-      this.simulation.getLensData(this.config.gridSize, this.config.gridSize),
-      this.config.gridSize,
-      this.lensDisplayBuffer,
-      200,
-    );
-
-    const gl = this.lensGL;
-    gl.useProgram(this.programs.lensDisplay);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.lensDisplayTexture);
-    gl.texImage2D(
-      gl.TEXTURE_2D,
-      0,
-      gl.RGBA32F,
-      200,
-      200,
-      0,
-      gl.RGBA,
-      gl.FLOAT,
-      this.lensDisplayBuffer,
-    );
-    gl.uniform1i(this.uniformLocations.lensDisplay.u_field, 0);
-    this.setLensDisplayUniforms();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.setSimulationUniforms(1);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
@@ -627,6 +541,7 @@ export class App {
     gl.uniform1f(uniforms.u_boundaryM, this.config.boundaryM);
     gl.uniform1i(uniforms.u_updateTarget, updateTarget);
 
+    // current/previous textures
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(
       gl.TEXTURE_2D,
@@ -645,10 +560,12 @@ export class App {
     );
     gl.uniform1i(uniforms.u_previous, 1);
 
+    // Lens
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.lensTexture);
     gl.uniform1i(uniforms.u_lens, 2);
 
+    // Fundamental for SHG updates
     if (updateTarget === 1) {
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, this.fundamentalTextures[this.next]);
@@ -656,28 +573,172 @@ export class App {
     }
   }
 
-  setLensDisplayUniforms() {
-    const gl = this.lensGL;
-    const uniforms = this.uniformLocations.lensDisplay;
+  renderPrimary() {
+    const gl = this.mainGL;
+    gl.useProgram(this.programs.primaryDisplay);
 
-    gl.uniform1f(uniforms.u_lensDisplayMin, this.lensStatistics.displayMin);
-    gl.uniform1f(uniforms.u_lensDisplayMax, this.lensStatistics.displayMax);
-    gl.uniform1f(uniforms.u_lensRadius, this.config.lensRadius);
-    gl.uniform2f(uniforms.u_resolution, 200, 200);
+    const uniforms = this.uniformLocations.primaryDisplay;
+    const mode = this.displayModes.primary;
+    gl.uniform1i(uniforms.u_displayMode, mode);
+
+    if (mode === DisplayMode.FUNDAMENTAL) {
+      // Directly use fundamentalTextures[this.current]
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.fundamentalTextures[this.current]);
+      gl.uniform1i(uniforms.u_field, 0);
+
+      // Set lens uniforms to default (not used)
+      gl.uniform1f(uniforms.u_lensDisplayMin, 0.0);
+      gl.uniform1f(uniforms.u_lensDisplayMax, 1.0);
+      gl.uniform1f(uniforms.u_lensRadius, 0.0);
+
+      // Full resolution
+      gl.uniform2f(
+        uniforms.u_resolution,
+        this.config.gridSize,
+        this.config.gridSize,
+      );
+    } else if (mode === DisplayMode.SHG) {
+      // If we ever choose SHG for primary, we can similarily read directly from shgTextures[this.current]
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.shgTextures[this.current]);
+      gl.uniform1i(uniforms.u_field, 0);
+
+      gl.uniform1f(uniforms.u_lensDisplayMin, 0.0);
+      gl.uniform1f(uniforms.u_lensDisplayMax, 1.0);
+      gl.uniform1f(uniforms.u_lensRadius, 0.0);
+
+      gl.uniform2f(
+        uniforms.u_resolution,
+        this.config.gridSize,
+        this.config.gridSize,
+      );
+    } else if (mode === DisplayMode.LENS) {
+      // For lens in primary, can directly use lensTexture
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.lensTexture);
+      gl.uniform1i(uniforms.u_field, 0);
+
+      gl.uniform1f(uniforms.u_lensDisplayMin, this.lensStatistics.displayMin);
+      gl.uniform1f(uniforms.u_lensDisplayMax, this.lensStatistics.displayMax);
+      gl.uniform1f(uniforms.u_lensRadius, this.config.lensRadius);
+      gl.uniform2f(
+        uniforms.u_resolution,
+        this.config.gridSize,
+        this.config.gridSize,
+      );
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  initEvents() {
-    window.addEventListener("resize", () => this.handleResize());
+  preview1CanvasSize() {
+    return this.config.gridSize;
   }
 
-  handleResize() {
-    const mainCanvas = document.getElementById("waveCanvas");
-    const pixelRatio = window.devicePixelRatio || 1;
-    mainCanvas.width = window.innerWidth * pixelRatio;
-    mainCanvas.height = (window.innerHeight - 200) * pixelRatio;
-    mainCanvas.style.width = window.innerWidth + "px";
-    mainCanvas.style.height = window.innerHeight - 200 + "px";
-    this.mainGL.viewport(0, 0, mainCanvas.width, mainCanvas.height);
+  preview2CanvasSize() {
+    return this.config.gridSize;
+  }
+
+  renderPreview(gl, uniforms, mode, texture, previewSize) {
+    gl.useProgram(
+      this.programs[
+        gl === this.preview1GL ? "preview1Display" : "preview2Display"
+      ],
+    );
+
+    // For SHG and LENS modes (and even FUNDAMENTAL if chosen), we do CPU readback + scale
+    // Then upload to the pre-created texture with texSubImage2D.
+
+    let data = null;
+    let lensSettings = { min: 0, max: 1, radius: 0 };
+    const size = this.config.gridSize;
+
+    if (mode === DisplayMode.FUNDAMENTAL) {
+      // CPU readback for fundamental if displayed in preview:
+      // This is less common, but we handle it similarly to SHG.
+      this.mainGL.bindFramebuffer(
+        this.mainGL.FRAMEBUFFER,
+        this.fundamentalFramebuffers[this.current],
+      );
+      this.mainGL.readPixels(
+        0,
+        0,
+        size,
+        size,
+        this.mainGL.RGBA,
+        this.mainGL.FLOAT,
+        this.readbackBuffer,
+      );
+      scaleDataForDisplay(
+        this.readbackBuffer,
+        size,
+        this.shgDisplayBuffer,
+        previewSize,
+      );
+      data = this.shgDisplayBuffer;
+    } else if (mode === DisplayMode.SHG) {
+      this.mainGL.bindFramebuffer(
+        this.mainGL.FRAMEBUFFER,
+        this.shgFramebuffers[this.current],
+      );
+      this.mainGL.readPixels(
+        0,
+        0,
+        size,
+        size,
+        this.mainGL.RGBA,
+        this.mainGL.FLOAT,
+        this.readbackBuffer,
+      );
+      scaleDataForDisplay(
+        this.readbackBuffer,
+        size,
+        this.shgDisplayBuffer,
+        previewSize,
+      );
+      data = this.shgDisplayBuffer;
+    } else if (mode === DisplayMode.LENS) {
+      const lensData = this.readFieldData(this.lensTexture); // CPU readback from lens
+      scaleDataForDisplay(lensData, size, this.lensDisplayBuffer, previewSize);
+      data = this.lensDisplayBuffer;
+      lensSettings = {
+        min: this.lensStatistics.displayMin,
+        max: this.lensStatistics.displayMax,
+        radius: this.config.lensRadius,
+      };
+    }
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      0,
+      0,
+      previewSize,
+      previewSize,
+      gl.RGBA,
+      gl.FLOAT,
+      data,
+    );
+
+    gl.uniform1i(uniforms.u_field, 0);
+    gl.uniform1i(uniforms.u_displayMode, mode);
+    gl.uniform1f(uniforms.u_lensDisplayMin, lensSettings.min);
+    gl.uniform1f(uniforms.u_lensDisplayMax, lensSettings.max);
+    gl.uniform1f(uniforms.u_lensRadius, lensSettings.radius);
+    gl.uniform2f(uniforms.u_resolution, previewSize, previewSize);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  setDisplayMode({ primary, preview1, preview2 }) {
+    if (primary !== undefined) this.displayModes.primary = primary;
+    if (preview1 !== undefined) this.displayModes.preview1 = preview1;
+    if (preview2 !== undefined) this.displayModes.preview2 = preview2;
   }
 
   animate() {
@@ -689,7 +750,3 @@ export class App {
     this.animate();
   }
 }
-
-// Start the application
-const app = new App();
-app.initialize().then(() => app.start());
