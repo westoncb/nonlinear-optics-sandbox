@@ -344,8 +344,9 @@ export class App {
         const x = centerX + i;
         const y = centerY + j;
         const idx = (y * this.config.gridSize + x) * 4;
-        fundamentalData[idx] = Math.exp(-(i * i + j * j) / 4) * 42;
-        fundamentalData[idx + 1] = 0.0001;
+        fundamentalData[idx] =
+          Math.exp(-(i * i + j * j) / 4) * this.config.initialPulseAmplitude;
+        fundamentalData[idx + 1] = this.config.initialPulsePhaseShift;
       }
     }
 

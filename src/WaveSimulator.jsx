@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { App } from "./app";
 import { constants } from "./config";
+import { ProgressGraph } from "./ProgressGraph";
 import "./WaveSimulator.css";
 
 export const WaveSimulator = () => {
   const mainContainerRef = useRef(null);
   const appRef = useRef(null);
-  const [gridSize, setGridSize] = useState(312); // Default until App initializes
+  const [gridSize, setGridSize] = useState(512); // Default until App initializes
+  const [progressData, setProgressData] = useState([]);
 
   // Initialize App
   useEffect(() => {
@@ -28,6 +30,15 @@ export const WaveSimulator = () => {
 
     initApp();
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Poll simulation progress
+      const p = appRef.current?.simulation.getProgress();
+      setProgressData([...p]);
+    }, 50);
+    return () => clearInterval(interval);
+  }, [appRef.current?.simulation]);
 
   const calculatePrimarySize = (containerRef) => {
     if (!containerRef.current) return null;
@@ -75,6 +86,9 @@ export const WaveSimulator = () => {
   return (
     <div className="simulator">
       <div className="top-bar">
+        <div style={{ flex: "1 1 auto" }}>
+          <ProgressGraph data={progressData} />
+        </div>
         <div className="spacer" />
         {/* Preview 1 */}
         <div className="preview-container">
@@ -109,11 +123,11 @@ export const WaveSimulator = () => {
         </div>
       </div>
 
-      <div className="status-bar">
+      {/* <div className="status-bar">
         <div className="status-content">
           Status: Running | Frame: 1000 | Time: 1.2ms
         </div>
-      </div>
+      </div> */}
 
       <div className="main-container" ref={mainContainerRef}>
         <span className="main-label">Wave Propagation</span>

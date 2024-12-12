@@ -11,8 +11,8 @@
   border-bottom: 1px solid #333;
   padding: 1rem;
   display: flex;
-  align-items: flex-start;
-  gap: 1.5rem;
+  align-items: center;
+  gap: .5rem;
 }
 
 .spacer {
