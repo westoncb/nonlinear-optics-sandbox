@@ -7,8 +7,20 @@ import "./WaveSimulator.css";
 export const WaveSimulator = () => {
   const mainContainerRef = useRef(null);
   const appRef = useRef(null);
-  const [gridSize, setGridSize] = useState(512); // Default until App initializes
-  const [progressData, setProgressData] = useState([]);
+  const [gridSize, setGridSize] = useState(constants.GRID_SIZE);
+  const [getProgress, setGetProgress] = useState(() => () => [
+    {
+      iteration: 0,
+      metric: 0,
+    },
+  ]);
+
+  // Track which content is shown in each canvas
+  const [canvasContent, setCanvasContent] = useState({
+    primary: "Fundamental field",
+    preview1: "Lens Profile",
+    preview2: "2nd harmonics",
+  });
 
   // Initialize App
   useEffect(() => {
@@ -25,20 +37,16 @@ export const WaveSimulator = () => {
         primaryCanvas.style.height = `${size}px`;
       }
 
+      // Set up progress function once app is initialized
+      if (appRef.current?.simulation.getProgress) {
+        setGetProgress(() => () => appRef.current.simulation.getProgress());
+      }
+
       appRef.current.start();
     };
 
     initApp();
   }, []);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Poll simulation progress
-      const p = appRef.current?.simulation.getProgress();
-      setProgressData([...p]);
-    }, 50);
-    return () => clearInterval(interval);
-  }, [appRef.current?.simulation]);
 
   const calculatePrimarySize = (containerRef) => {
     if (!containerRef.current) return null;
@@ -53,16 +61,29 @@ export const WaveSimulator = () => {
     const currentPreview1 = appRef.current.displayModes.preview1;
     const currentPreview2 = appRef.current.displayModes.preview2;
 
+    // Update display modes and content labels
     if (clickedPreviewNum === 1) {
       appRef.current.setDisplayMode({
         primary: currentPreview1,
         preview1: currentPrimary,
       });
+
+      setCanvasContent((prev) => ({
+        ...prev,
+        primary: prev.preview1,
+        preview1: prev.primary,
+      }));
     } else if (clickedPreviewNum === 2) {
       appRef.current.setDisplayMode({
         primary: currentPreview2,
         preview2: currentPrimary,
       });
+
+      setCanvasContent((prev) => ({
+        ...prev,
+        primary: prev.preview2,
+        preview2: prev.primary,
+      }));
     }
   };
 
@@ -87,7 +108,11 @@ export const WaveSimulator = () => {
     <div className="simulator">
       <div className="top-bar">
         <div style={{ flex: "1 1 auto" }}>
-          <ProgressGraph data={progressData} />
+          <ProgressGraph
+            getProgress={getProgress}
+            updateRate={50}
+            maxPoints={40000}
+          />
         </div>
         <div className="spacer" />
         {/* Preview 1 */}
@@ -103,7 +128,7 @@ export const WaveSimulator = () => {
             className="preview-canvas"
             onClick={() => handlePreviewClick(1)}
           />
-          <span className="preview-label">Lens Profile</span>
+          <span className="preview-label">{canvasContent.preview1}</span>
         </div>
 
         {/* Preview 2 */}
@@ -119,18 +144,12 @@ export const WaveSimulator = () => {
             className="preview-canvas"
             onClick={() => handlePreviewClick(2)}
           />
-          <span className="preview-label">SHG Output</span>
+          <span className="preview-label">{canvasContent.preview2}</span>
         </div>
       </div>
 
-      {/* <div className="status-bar">
-        <div className="status-content">
-          Status: Running | Frame: 1000 | Time: 1.2ms
-        </div>
-      </div> */}
-
       <div className="main-container" ref={mainContainerRef}>
-        <span className="main-label">Wave Propagation</span>
+        <span className="main-label">{canvasContent.primary}</span>
         <div className="canvas-wrapper">
           <canvas
             id="primaryCanvas"

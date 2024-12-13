@@ -1,10 +1,19 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 
-export const ProgressGraph = ({ data }) => {
+export const ProgressGraph = ({
+  getProgress,
+  updateRate = 100,
+  maxPoints = 20000,
+}) => {
   const containerRef = useRef(null);
   const plotRef = useRef(null);
+  const timeoutRef = useRef(null);
+  const [data, setData] = useState([]);
+
+  // Store last values to avoid duplicate updates
+  const lastValuesRef = useRef({ iteration: 0, metric: 0 });
 
   // Initialize plot
   useEffect(() => {
@@ -54,19 +63,6 @@ export const ProgressGraph = ({ data }) => {
       focus: {
         show: false,
       },
-      hooks: {
-        draw: [
-          (u) => {
-            const ctx = u.ctx;
-            if (u.data[1].length > 0) {
-              const latestVal = u.data[1][u.data[1].length - 1].toFixed(3);
-              ctx.fillStyle = "#fff";
-              ctx.font = "12px sans-serif";
-              ctx.fillText(`Latest: ${latestVal}`, 13, 25);
-            }
-          },
-        ],
-      },
     };
 
     // Initial empty data
@@ -96,16 +92,45 @@ export const ProgressGraph = ({ data }) => {
     };
   }, []); // Empty deps array - only run on mount
 
-  // Update data
+  // Set up the update cycle
   useEffect(() => {
-    if (!plotRef.current || !data || data.length < 2) return;
+    const updateData = () => {
+      const progress = getProgress();
+      const newPoint = progress[progress.length - 1];
 
-    // Transform and limit data
-    const displayData = data.slice(-20000);
-    const uPlotData = [
-      displayData.map((d) => d.iteration),
-      displayData.map((d) => d.metric),
-    ];
+      // Only update if values have changed
+      if (
+        newPoint.iteration !== lastValuesRef.current.iteration ||
+        newPoint.metric !== lastValuesRef.current.metric
+      ) {
+        lastValuesRef.current = newPoint;
+
+        setData((current) => {
+          const updated = progress;
+          return updated.slice(-maxPoints);
+        });
+      }
+
+      // Schedule next update
+      timeoutRef.current = setTimeout(updateData, updateRate);
+    };
+
+    // Start the update cycle
+    updateData();
+
+    // Cleanup
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [getProgress, updateRate, maxPoints]);
+
+  // Update plot with new data
+  useEffect(() => {
+    if (!plotRef.current || data.length < 2) return;
+
+    const uPlotData = [data.map((d) => d.iteration), data.map((d) => d.metric)];
 
     plotRef.current.setData(uPlotData);
   }, [data]);

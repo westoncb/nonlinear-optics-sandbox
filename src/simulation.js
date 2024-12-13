@@ -16,7 +16,7 @@ export class Simulation {
     // Initialize Adam optimizer state
     this.adamState = adam.createState([config.fresnelZones, config.numSectors]);
 
-    // Update strategies (same as previously provided)
+    // Update strategies
     this.updateStrategies = {
       original: (fund, shg, modeCount) => {
         const fundIntensity = fund.real * fund.real + fund.imag * fund.imag;
@@ -497,7 +497,6 @@ export class Simulation {
     return data;
   }
 
-  // New method to get progress data
   getProgress() {
     // Return a copy or a reference to the current progress history
     return this.progressHistory;

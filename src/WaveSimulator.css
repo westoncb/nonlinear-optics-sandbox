@@ -33,11 +33,12 @@
   display: block;
   width: ${constants.PREVIEW_SIZE}px;
   height: ${constants.PREVIEW_SIZE}px;
+  cursor: pointer;
 }
 
 .preview-label {
   font-size: 0.75rem;
-  color: #666;
+  color: #aaa;
   padding-bottom: 0.25rem;
 }
 
@@ -68,6 +69,7 @@
   font-size: 0.875rem;
   color: white;
   opacity: 0.5;
+  z-index: 100;
 }
 
 .canvas-wrapper {

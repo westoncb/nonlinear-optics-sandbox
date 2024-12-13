@@ -1,40 +1,41 @@
 export const constants = {
   PREVIEW_SIZE: 200,
+  GRID_SIZE: 512, // because of the some react/canvas nuances this needs to be available before first render; putting it here as a workaround
 };
 
 export class Config {
   constructor() {
     // Core simulation parameters
-    this.dt = 0.35; // Slightly smaller timestep for stability
-    this.dx = 1.0; // Keep spatial discretization simple
-    this.gridSize = 512; // Larger domain for more complex pattern formation
-    this.damping = 0.9999; // Slight damping to avoid unbounded growth but still allow some wave action
-    this.c = 1.0; // Base wave speed
+    this.dt = 0.1;
+    this.dx = 1.0;
+    this.gridSize = constants.GRID_SIZE; // temporary hack; see comment above
+    this.damping = 0.9998;
+    this.c = 1.0;
 
     // Nonlinear parameters
-    this.n2 = 2.0; // Increased nonlinear index for stronger self-focusing
-    this.Isat = 0.25; // Slightly lower saturation intensity to see nonlinear effects kick in earlier
-    this.chi = 0.7; // Stronger second-harmonic generation coefficient to amplify nonlinear interactions
+    this.n2 = -1.4;
+    this.Isat = 0.14;
+    this.chi = 0.25;
 
     // Boundary parameters
-    this.boundaryAlpha = 0.4; // More pronounced boundary shaping
-    this.boundaryM = 10; // Higher mode boundary modulation
-    this.margin = 10; // A bit more margin for boundary conditions
+    this.boundaryAlpha = 0.4;
+    this.boundaryM = 16;
+    this.margin = 10;
 
     // Lens parameters
-    this.lensRadius = 60; // Larger lens radius for more intricate focusing patterns
-    this.fresnelZones = 32; // More zones for finer radial control
-    this.numSectors = 1800; // Higher angular resolution to produce complex angular patterns
-    this.hillPower = 1.5; // Slightly increased hill power for a more nuanced logistic weighting
-    this.updateStrategy = "o1OptimalStrategy2"; // Using the PDE-informed strategy
+    this.lensRadius = 12;
+    this.fresnelZones = 10;
+    this.numSectors = 128;
+    this.hillPower = 1.5;
+    this.updateStrategy = "original";
 
     // Optimization parameters
-    this.learningRate = 0.00004; // Slightly higher learning rate for more dynamic lens updates
-    this.optimizationInterval = 1; // Keep frequent updates to lens modes
+    this.learningRate = 0.00005;
+    this.optimizationInterval = 1;
 
     // Initial pulse parameters
-    this.initialPulseAmplitude = 30; // Strong initial field, but not too high
-    this.initialPulsePhaseShift = 0.7; // Non-zero phase shift to create interesting initial conditions
+    this.initialPulseAmplitude = 90;
+    this.initialPulsePhaseShift = 0.7;
 
     // Calculate derived values
     this.updateDerivedValues();
