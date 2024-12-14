@@ -100,8 +100,8 @@ export const ProgressGraph = ({
 
       // Only update if values have changed
       if (
-        newPoint.iteration !== lastValuesRef.current.iteration ||
-        newPoint.metric !== lastValuesRef.current.metric
+        newPoint?.iteration !== lastValuesRef.current?.iteration ||
+        newPoint?.metric !== lastValuesRef.current?.metric
       ) {
         lastValuesRef.current = newPoint;
 
