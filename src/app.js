@@ -160,8 +160,9 @@ export class App {
       "u_dx",
       "u_damping",
       "u_c",
-      "u_n2",
-      "u_Isat",
+      "u_chi_ratio",
+      "u_shg_Isat",
+      "u_kerr_Isat",
       "u_chi",
       "u_resolution",
       "u_boundaryR0",
@@ -533,8 +534,9 @@ export class App {
     gl.uniform1f(uniforms.u_dx, this.config.dx);
     gl.uniform1f(uniforms.u_damping, this.config.damping);
     gl.uniform1f(uniforms.u_c, this.config.c);
-    gl.uniform1f(uniforms.u_n2, this.config.n2);
-    gl.uniform1f(uniforms.u_Isat, this.config.Isat);
+    gl.uniform1f(uniforms.u_chi_ratio, this.config.chi_ratio);
+    gl.uniform1f(uniforms.u_shg_Isat, this.config.shg_Isat);
+    gl.uniform1f(uniforms.u_kerr_Isat, this.config.kerr_Isat);
     gl.uniform1f(uniforms.u_chi, this.config.chi);
     gl.uniform2f(
       uniforms.u_resolution,

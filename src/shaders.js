@@ -21,9 +21,10 @@ export const getSimulationShaderSource = (config) => {
   uniform float u_dx;
   uniform float u_damping;
   uniform float u_c;
-  uniform float u_n2;
-  uniform float u_Isat;
   uniform float u_chi;
+  uniform float u_chi_ratio;
+  uniform float u_shg_Isat;
+  uniform float u_kerr_Isat;
   uniform vec2 u_resolution;
   uniform float u_boundaryR0;
   uniform float u_boundaryAlpha;
@@ -139,35 +140,41 @@ export const getSimulationShaderSource = (config) => {
       vec4 lens = texture(u_lens, pos * texel);
 
       vec2 laplacianRaw = ${config.use9PointStencil ? "nine" : "five"}PointLaplacian(pos, texel, center);
-
-      // Original complex multiplication version for reference:
       vec2 lensedLaplacian = vec2(
           laplacianRaw.x * lens.x - laplacianRaw.y * lens.y,
           laplacianRaw.x * lens.y + laplacianRaw.y * lens.x
       );
 
-      // Real-only version - only using lens.x as the phase factor
-      // vec2 lensedLaplacian = laplacianRaw * lens.x;
-
       if (u_updateTarget == 0) {
           // Fundamental field update
           float amp2 = dot(center.xy, center.xy);
-          float local_c2 = u_c * u_c * (1.0 + (u_n2 * amp2) / (1.0 + amp2/u_Isat));
+
+          // Calculate Kerr effect with its own saturation
+          // n2 is now derived from chi^2 * chi_ratio for realistic scaling
+          float kerrSaturationFactor = 1.0 / (1.0 + amp2/u_kerr_Isat);
+          float n2_effective = u_chi * u_chi * u_chi_ratio;
+          float local_c2 = u_c * u_c * (1.0 + (n2_effective * amp2 * kerrSaturationFactor));
 
           vec2 new_val = (2.0 * center.xy - old.xy + local_c2 * u_dt * u_dt * lensedLaplacian) * u_damping;
           fragColor = vec4(new_val, 0.0, 1.0);
       } else {
           // SHG field update
           float shg_amp2 = dot(center.xy, center.xy);
-          float local_c2 = u_c * u_c * (1.0 + (u_n2 * shg_amp2) / (1.0 + shg_amp2/u_Isat));
+
+          // Use Kerr saturation for the refractive index modulation of SHG field
+          float kerrSaturationFactor = 1.0 / (1.0 + shg_amp2/u_kerr_Isat);
+          float n2_effective = u_chi * u_chi * u_chi_ratio;
+          float local_c2 = u_c * u_c * (1.0 + (n2_effective * shg_amp2 * kerrSaturationFactor));
 
           vec4 fund = texture(u_fundamental, pos * texel);
           float fund_amp2 = dot(fund.xy, fund.xy);
-          float saturationFactor = 1.0 / (1.0 + fund_amp2/u_Isat);
+
+          // Use SHG saturation for the frequency conversion process
+          float shgSaturationFactor = 1.0 / (1.0 + fund_amp2/u_shg_Isat);
           vec4 phaseMismatchTerm = calculatePhaseMismatchTerm(pos, texel);
           vec2 sourceTerm = vec2(
-              u_chi * fund_amp2 * saturationFactor * phaseMismatchTerm.x,  // Real part
-              u_chi * fund_amp2 * saturationFactor * phaseMismatchTerm.y   // Imaginary part
+              u_chi * fund_amp2 * shgSaturationFactor * phaseMismatchTerm.x,
+              u_chi * fund_amp2 * shgSaturationFactor * phaseMismatchTerm.y
           );
 
           vec2 new_val = (2.0 * center.xy - old.xy +
