@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { App } from "./app";
-import { constants } from "./config";
+import { ConfigManager, constants, canonicalConfigs } from "./config-manager";
 import { ProgressGraph } from "./ProgressGraph";
+import { ConfigModal } from "./ConfigModal";
 import "./WaveSimulator.css";
 
 export const WaveSimulator = () => {
   const mainContainerRef = useRef(null);
   const appRef = useRef(null);
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [gridSize, setGridSize] = useState(constants.GRID_SIZE);
   const [getProgress, setGetProgress] = useState(() => () => [
     {
@@ -14,6 +16,8 @@ export const WaveSimulator = () => {
       metric: 0,
     },
   ]);
+  const [config, setConfig] = useState(canonicalConfigs[0]);
+  const configManager = useRef(new ConfigManager()).current;
 
   // Track which content is shown in each canvas
   const [canvasContent, setCanvasContent] = useState({
@@ -22,10 +26,15 @@ export const WaveSimulator = () => {
     preview2: "2nd harmonics",
   });
 
+  const handleConfigSave = (configData, metadata) => {
+    const newConfig = configManager.saveConfig(configData, metadata);
+    setConfig(newConfig);
+  };
+
   // Initialize App
   useEffect(() => {
     const initApp = async () => {
-      appRef.current = new App();
+      appRef.current = new App(config);
       await appRef.current.initialize();
       setGridSize(appRef.current.config.gridSize);
 
@@ -46,7 +55,16 @@ export const WaveSimulator = () => {
     };
 
     initApp();
-  }, []);
+
+    // Cleanup function
+    return () => {
+      if (appRef.current) {
+        appRef.current.stop();
+        appRef.current.cleanup();
+        appRef.current = null;
+      }
+    };
+  }, [config]);
 
   const calculatePrimarySize = (containerRef) => {
     if (!containerRef.current) return null;
@@ -107,16 +125,41 @@ export const WaveSimulator = () => {
   return (
     <div className="simulator">
       <div className="top-bar">
-        <div style={{ flex: "1 1 auto" }}>
-          <ProgressGraph
-            getProgress={getProgress}
-            updateRate={50}
-            maxPoints={40000}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            flexGrow: 1,
+          }}
+        >
+          <div className="preview-label" style={{ marginBottom: "0.5rem" }}>
+            convergence
+          </div>
+          <div style={{ flex: "1 1 auto" }}>
+            <ProgressGraph
+              getProgress={getProgress}
+              updateRate={50}
+              maxPoints={40000}
+            />
+          </div>
+          <hr
+            style={{
+              margin: "1rem",
+              border: "1px solid #333",
+            }}
           />
+          <button
+            className="config-button"
+            onClick={() => setIsConfigModalOpen(true)}
+            aria-label="Open configuration settings"
+          >
+            Configure
+          </button>
         </div>
         <div className="spacer" />
         {/* Preview 1 */}
-        <div className="preview-container">
+        <div className="labeled-container">
           <canvas
             id="preview1Canvas"
             width={gridSize}
@@ -130,9 +173,8 @@ export const WaveSimulator = () => {
           />
           <span className="preview-label">{canvasContent.preview1}</span>
         </div>
-
         {/* Preview 2 */}
-        <div className="preview-container">
+        <div className="labeled-container">
           <canvas
             id="preview2Canvas"
             width={gridSize}
@@ -171,6 +213,14 @@ export const WaveSimulator = () => {
           className="simulation-canvas"
         />
       </div>
+
+      <ConfigModal
+        isOpen={isConfigModalOpen}
+        onClose={() => setIsConfigModalOpen(false)}
+        configManager={configManager}
+        onSave={handleConfigSave}
+        setConfig={setConfig}
+      />
     </div>
   );
 };
