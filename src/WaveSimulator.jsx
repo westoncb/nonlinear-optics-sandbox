@@ -27,7 +27,7 @@ export const WaveSimulator = () => {
   });
 
   const handleConfigSave = (configData, metadata) => {
-    const newConfig = configManager.saveConfig(configData, metadata);
+    const newConfig = configManager.saveUserConfig(configData, metadata);
     setConfig(newConfig);
   };
 
