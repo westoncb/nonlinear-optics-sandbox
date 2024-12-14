@@ -1,9 +1,8 @@
-import { Config, constants } from "./config.js";
 import { Simulation } from "./simulation.js";
 import { webgl, stats, scaleDataForDisplay } from "./util.js";
 import {
   vertexShaderSource,
-  simulationShaderSource,
+  getSimulationShaderSource,
   displayShaderSource,
 } from "./shaders.js";
 
@@ -14,9 +13,12 @@ const DisplayMode = {
 };
 
 export class App {
-  constructor() {
-    this.config = new Config();
+  constructor(config) {
+    this.config = config.data;
     this.simulation = new Simulation(this.config);
+    this.isRunning = false;
+
+    console.log("CONFIG", this.config);
 
     // GL contexts
     // mainGL for simulation AND primary display:
@@ -126,7 +128,7 @@ export class App {
     this.programs.simulation = webgl.createProgram(
       this.mainGL,
       vertexShaderSource,
-      simulationShaderSource,
+      getSimulationShaderSource(this.config),
     );
 
     // Display
@@ -431,12 +433,14 @@ export class App {
     );
     const shgData = this.readFieldData(this.shgTextures[this.current]);
 
-    this.simulation.updateLens(
-      fundamentalData,
-      shgData,
-      this.config.gridSize,
-      this.config.gridSize,
-    );
+    if (!this.config.disableAdaptation) {
+      this.simulation.updateLens(
+        fundamentalData,
+        shgData,
+        this.config.gridSize,
+        this.config.gridSize,
+      );
+    }
 
     this.updateLensTexture();
     this.updateLensStatistics();
@@ -743,11 +747,108 @@ export class App {
   }
 
   animate() {
+    if (!this.isRunning) return;
+
     this.render();
     requestAnimationFrame(() => this.animate());
   }
 
   start() {
+    this.isRunning = true;
     this.animate();
+  }
+
+  stop() {
+    this.isRunning = false;
+  }
+
+  cleanup() {
+    const glContexts = [
+      {
+        gl: this.mainGL,
+        programs: [this.programs.simulation, this.programs.primaryDisplay],
+        textures: [
+          ...this.fundamentalTextures,
+          ...this.shgTextures,
+          this.lensTexture,
+        ],
+        buffers: [this.quadBuffers.main],
+        framebuffers: [
+          ...this.fundamentalFramebuffers,
+          ...this.shgFramebuffers,
+        ],
+      },
+      {
+        gl: this.preview1GL,
+        programs: [this.programs.preview1Display],
+        textures: [this.preview1Texture],
+        buffers: [this.quadBuffers.preview1],
+      },
+      {
+        gl: this.preview2GL,
+        programs: [this.programs.preview2Display],
+        textures: [this.preview2Texture],
+        buffers: [this.quadBuffers.preview2],
+      },
+    ];
+
+    glContexts.forEach(
+      ({ gl, programs, textures = [], buffers = [], framebuffers = [] }) => {
+        if (!gl) return;
+
+        // Delete programs
+        programs.forEach((program) => {
+          if (program) {
+            // Detach and delete shaders first
+            const attachedShaders = gl.getAttachedShaders(program);
+            attachedShaders.forEach((shader) => {
+              gl.detachShader(program, shader);
+              gl.deleteShader(shader);
+            });
+
+            gl.deleteProgram(program);
+          }
+        });
+
+        // Delete textures
+        textures.forEach((texture) => {
+          if (texture) gl.deleteTexture(texture);
+        });
+
+        // Delete buffers
+        buffers.forEach((buffer) => {
+          if (buffer) gl.deleteBuffer(buffer);
+        });
+
+        // Delete framebuffers
+        framebuffers.forEach((framebuffer) => {
+          if (framebuffer) gl.deleteFramebuffer(framebuffer);
+        });
+
+        // Unbind everything
+        gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+        gl.useProgram(null);
+      },
+    );
+
+    // Clear references
+    this.programs = {};
+    this.quadBuffers = {};
+    this.fundamentalTextures = [];
+    this.fundamentalFramebuffers = [];
+    this.shgTextures = [];
+    this.shgFramebuffers = [];
+    this.lensTexture = null;
+    this.preview1Texture = null;
+    this.preview2Texture = null;
+
+    // Clear WebGL context references
+    this.mainGL = null;
+    this.preview1GL = null;
+    this.preview2GL = null;
   }
 }
