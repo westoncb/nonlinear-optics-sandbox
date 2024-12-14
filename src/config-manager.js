@@ -1,43 +1,44 @@
 export const constants = {
   PREVIEW_SIZE: 200,
-  GRID_SIZE: 256, // because of the some react/canvas nuances this needs to be available before first render; putting it here as a workaround
+  GRID_SIZE: 512, // because of the some react/canvas nuances this needs to be available before first render; putting it here as a workaround
 };
 
 // Default configuration values
 const defaultConfigData = {
   // Core simulation parameters
-  dt: 0.1,
+  dt: 0.2,
   dx: 1.0,
   gridSize: constants.GRID_SIZE,
   damping: 0.9999,
   c: 1.0,
   use9PointStencil: true,
 
-  // Nonlinear parameters
-  n2: 2.5,
-  Isat: 0.25,
-  chi: 0.25,
+  // Nonlinear parameters - adjusted for stronger SHG effects
+  chi: 0.5, // Increased χ(2) for more pronounced SHG
+  chi_ratio: 0.01, // Reduced ratio makes Kerr effect appropriately weaker
+  shg_Isat: 0.3, // Lower saturation for SHG = stronger saturation effects
+  kerr_Isat: 1.2, // Higher saturation threshold for Kerr = weaker saturation
 
-  // Boundary parameters
+  // Boundary parameters - kept similar
   boundaryAlpha: 0.3,
   boundaryM: 8,
   margin: 10,
   boundaryReflectivity: "1.0",
 
-  // Lens parameters
+  // Lens parameters - adjusted for finer control
   lensRadius: 128,
-  fresnelZones: 64,
+  fresnelZones: 96, // Increased for finer phase control
   numSectors: 1000,
   hillPower: 2,
-  updateStrategy: "hierarchicalZones",
+  updateStrategy: "phaseMatching",
 
-  // Optimization parameters
-  learningRate: 0.0000002,
+  // Optimization parameters - adjusted for new nonlinearities
+  learningRate: 0.00005, // Doubled because of weaker Kerr effect
   optimizationInterval: 1,
 
-  // Initial pulse parameters
-  initialPulseAmplitude: 90,
-  initialPulsePhaseShift: 0.07,
+  // Initial pulse parameters - adjusted for better conversion
+  initialPulseAmplitude: 75, // Reduced to stay in sweet spot of nonlinearity
+  initialPulsePhaseShift: 0.05,
 
   disableAdaptation: false,
 };
