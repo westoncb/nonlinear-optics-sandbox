@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { canonicalConfigs } from "./config-manager";
+import { canonicalConfigs } from "../config-manager";
 import "./ConfigModal.css";
 
 export const ConfigModal = ({

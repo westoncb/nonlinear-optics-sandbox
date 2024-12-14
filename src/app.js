@@ -1,4 +1,4 @@
-import { Simulation } from "./simulation.js";
+import { Simulation } from "./lens-optimizer.js";
 import { webgl, stats, scaleDataForDisplay } from "./util.js";
 import {
   vertexShaderSource,

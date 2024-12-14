@@ -125,36 +125,6 @@ export const polar = {
   },
 };
 
-// Adam optimizer helpers
-export const adam = {
-  createState(dimensions) {
-    return {
-      beta1: 0.9,
-      beta2: 0.999,
-      epsilon: 1e-8,
-      m_real: Array(dimensions[0])
-        .fill()
-        .map(() => Array(dimensions[1]).fill(0)),
-      m_imag: Array(dimensions[0])
-        .fill()
-        .map(() => Array(dimensions[1]).fill(0)),
-      v_real: Array(dimensions[0])
-        .fill()
-        .map(() => Array(dimensions[1]).fill(0)),
-      v_imag: Array(dimensions[0])
-        .fill()
-        .map(() => Array(dimensions[1]).fill(0)),
-      t: 0,
-    };
-  },
-
-  getBiasCorrection(state) {
-    const bc1 = 1.0 / (1.0 - Math.pow(state.beta1, state.t));
-    const bc2 = 1.0 / (1.0 - Math.pow(state.beta2, state.t));
-    return { bc1, bc2 };
-  },
-};
-
 export const scaleDataForDisplay = (
   sourceData,
   sourceSize,

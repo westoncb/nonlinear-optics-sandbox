@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { App } from "./app";
-import { ConfigManager, constants, canonicalConfigs } from "./config-manager";
+import { App } from "../app";
+import { ConfigManager, constants, canonicalConfigs } from "../config-manager";
 import { ProgressGraph } from "./ProgressGraph";
 import { ConfigModal } from "./ConfigModal";
 import "./WaveSimulator.css";
