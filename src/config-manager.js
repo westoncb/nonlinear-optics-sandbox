@@ -5,54 +5,47 @@ export const constants = {
 
 // Default configuration values
 const defaultConfigData = {
-  // Core simulation parameters
-  dt: 0.05,
-  dx: 1.0,
+  dt: 0.08,
+  dx: 1,
   gridSize: 256,
   damping: 0.9999,
-  c: 1.0,
+  c: 1,
   use9PointStencil: true,
-
-  // Nonlinear parameters - adjusted for stronger SHG effects
-  chi: 0.5, // Increased χ(2) for more pronounced SHG
-  chi_ratio: 0.01, // Reduced ratio makes Kerr effect appropriately weaker
-  shg_Isat: 0.3, // Lower saturation for SHG = stronger saturation effects
-  kerr_Isat: 1.2, // Higher saturation threshold for Kerr = weaker saturation
-
-  // Boundary parameters - kept similar
-  boundaryAlpha: 0.3,
-  boundaryM: 8,
-  margin: 10,
-  boundaryReflectivity: "1.0",
-
-  // Lens parameters - adjusted for finer control
-  lensRadius: 128,
-  fresnelZones: 96, // Increased for finer phase control
-  numSectors: 1000,
-  hillPower: 2,
-  updateStrategy: "phaseMatching",
-
-  // Optimization parameters - adjusted for new nonlinearities
-  learningRate: 0.00005, // Doubled because of weaker Kerr effect
+  chi: 0.4,
+  chi_ratio: -8,
+  shg_Isat: 0.15,
+  kerr_Isat: 0.3,
+  boundaryAlpha: 0.25,
+  boundaryM: 24,
+  margin: 12,
+  boundaryReflectivity: "0.98",
+  lensRadius: 48,
+  fresnelZones: 40,
+  numSectors: 800,
+  hillPower: 3,
+  updateStrategy: "o1SecondOptimal",
+  learningRate: 0.000015,
   optimizationInterval: 1,
-
-  // Initial pulse parameters - adjusted for better conversion
-  initialPulseAmplitude: 75, // Reduced to stay in sweet spot of nonlinearity
-  initialPulsePhaseShift: 0.05,
-
+  initialPulseAmplitude: 120,
+  initialPulsePhaseShift: 0.08,
   disableAdaptation: false,
+  boundaryR0: 92.8,
 };
 
 const updateDerivedValues = (fullConfig) => {
-  const config = fullConfig.data;
+  // Create a new config object with gridSize enforced from constants
+  const newData = {
+    ...fullConfig.data,
+    gridSize: constants.GRID_SIZE,
+  };
 
   return {
     ...fullConfig,
     data: {
-      ...config,
-      gridSize: constants.GRID_SIZE, // overriding config value to deal with a bug where changing grid size at runtime breaks something in the webgl/canvas setup
+      ...newData,
       boundaryR0:
-        (config.gridSize / 2 - config.margin) / (1 + config.boundaryAlpha),
+        (constants.GRID_SIZE / 2 - newData.margin) /
+        (1 + newData.boundaryAlpha),
     },
   };
 };
@@ -67,7 +60,7 @@ export const canonicalConfigs = [
     },
   },
   // Add more canonical configs here
-].map(updateDerivedValues);
+];
 
 export class ConfigManager {
   constructor() {
@@ -79,10 +72,10 @@ export class ConfigManager {
   getAllConfigs() {
     const configs = new Map();
 
-    // Add canonical configs first
-    canonicalConfigs.map(updateDerivedValues).forEach((config) => {
+    // Add canonical configs with derived values
+    canonicalConfigs.forEach((config) => {
       configs.set(config.metadata.name, {
-        ...config,
+        ...updateDerivedValues(config),
         isCanonical: true,
       });
     });
@@ -90,7 +83,7 @@ export class ConfigManager {
     // Add user configs (will override canonical if same name)
     this.userConfigs.forEach((config, name) => {
       configs.set(name, {
-        ...config,
+        ...updateDerivedValues(config),
         isCanonical: false,
       });
     });
@@ -98,15 +91,57 @@ export class ConfigManager {
     return configs;
   }
 
-  // Save a new user config
+  // Get a single config with derived values
+  getConfig(name) {
+    // Check canonical configs first
+    const canonicalConfig = canonicalConfigs.find(
+      (c) => c.metadata.name === name,
+    );
+    if (canonicalConfig) {
+      return {
+        ...updateDerivedValues(canonicalConfig),
+        isCanonical: true,
+      };
+    }
+
+    // Then check user configs
+    const userConfig = this.userConfigs.get(name);
+    if (userConfig) {
+      return {
+        ...updateDerivedValues(userConfig),
+        isCanonical: false,
+      };
+    }
+
+    return null;
+  }
+
+  // Save a new user config - store raw values
   saveUserConfig(data, metadata) {
     const config = { data, metadata };
     this.userConfigs.set(metadata.name, config);
     this.persistUserConfigs();
-    return config;
+    return this.getConfig(metadata.name); // Return with derived values
   }
 
-  // Load user configs from localStorage
+  // Delete a user config
+  deleteConfig(name) {
+    // Check if it's a canonical config
+    if (canonicalConfigs.some((c) => c.metadata.name === name)) {
+      throw new Error(`Cannot delete canonical config "${name}"`);
+    }
+
+    // Check if the config exists
+    if (!this.userConfigs.has(name)) {
+      throw new Error(`User config "${name}" not found`);
+    }
+
+    this.userConfigs.delete(name);
+    this.persistUserConfigs();
+    return true;
+  }
+
+  // Load user configs from localStorage - store raw values
   loadUserConfigs() {
     try {
       const saved = localStorage.getItem("userConfigs");
@@ -120,7 +155,7 @@ export class ConfigManager {
     }
   }
 
-  // Save user configs to localStorage
+  // Save user configs to localStorage - store raw values
   persistUserConfigs() {
     try {
       const configsObj = Object.fromEntries(this.userConfigs);
@@ -132,23 +167,26 @@ export class ConfigManager {
 
   // Helper to create a new config from existing one
   forkConfig(existingConfig, newName) {
-    return {
+    // Remove any derived values before forking
+    const baseConfig = {
       data: { ...existingConfig.data },
       metadata: {
         name: newName,
         description: `Forked from ${existingConfig.metadata.name}`,
       },
     };
+
+    return this.saveUserConfig(baseConfig.data, baseConfig.metadata);
   }
 
   // Create a new blank config
   createBlankConfig(name) {
-    return {
-      data: { ...defaultConfigData },
-      metadata: {
+    return this.saveUserConfig(
+      { ...defaultConfigData },
+      {
         name,
         description: "New configuration",
       },
-    };
+    );
   }
 }

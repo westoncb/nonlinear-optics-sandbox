@@ -12,7 +12,7 @@ const DisplayMode = {
   LENS: 2,
 };
 
-export class App {
+export class RenderSystem {
   constructor(config) {
     this.config = config.data;
     this.lensOptimizer = new LensOptimizer(this.config);

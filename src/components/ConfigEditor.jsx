@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { canonicalConfigs } from "../config-manager";
-import "./ConfigModal.css";
+import "./ConfigEditor.css";
 
-export const ConfigModal = ({
+export const ConfigEditor = ({
   isOpen,
   onClose,
   configManager,

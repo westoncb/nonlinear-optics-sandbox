@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from "react";
-import { App } from "../app";
+import { RenderSystem } from "../render-system";
 import { ConfigManager, constants, canonicalConfigs } from "../config-manager";
 import { ProgressGraph } from "./ProgressGraph";
-import { ConfigModal } from "./ConfigModal";
-import "./WaveSimulator.css";
+import { ConfigEditor } from "./ConfigEditor";
+import "./App.css";
 
-export const WaveSimulator = () => {
+export const App = () => {
   const mainContainerRef = useRef(null);
-  const appRef = useRef(null);
+  const renderSystemRef = useRef(null);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
   const [getProgress, setGetProgress] = useState(() => () => [
     {
@@ -35,9 +35,9 @@ export const WaveSimulator = () => {
   // Initialize App
   useEffect(() => {
     const initApp = async () => {
-      appRef.current = new App(config);
-      await appRef.current.initialize();
-      setGridSize(appRef.current.config.gridSize);
+      renderSystemRef.current = new RenderSystem(config);
+      await renderSystemRef.current.initialize();
+      setGridSize(renderSystemRef.current.config.gridSize);
 
       // Set initial sizes
       const size = calculatePrimarySize(mainContainerRef);
@@ -48,21 +48,23 @@ export const WaveSimulator = () => {
       }
 
       // Set up progress function once app is initialized
-      if (appRef.current?.lensOptimizer.getProgress) {
-        setGetProgress(() => () => appRef.current?.lensOptimizer.getProgress());
+      if (renderSystemRef.current?.lensOptimizer.getProgress) {
+        setGetProgress(
+          () => () => renderSystemRef.current?.lensOptimizer.getProgress(),
+        );
       }
 
-      appRef.current.start();
+      renderSystemRef.current.start();
     };
 
     initApp();
 
     // Cleanup function
     return () => {
-      if (appRef.current) {
-        appRef.current.stop();
-        appRef.current.cleanup();
-        appRef.current = null;
+      if (renderSystemRef.current) {
+        renderSystemRef.current.stop();
+        renderSystemRef.current.cleanup();
+        renderSystemRef.current = null;
       }
     };
   }, [config]);
@@ -74,15 +76,15 @@ export const WaveSimulator = () => {
   };
 
   const handlePreviewClick = (clickedPreviewNum) => {
-    if (!appRef.current) return;
+    if (!renderSystemRef.current) return;
 
-    const currentPrimary = appRef.current.displayModes.primary;
-    const currentPreview1 = appRef.current.displayModes.preview1;
-    const currentPreview2 = appRef.current.displayModes.preview2;
+    const currentPrimary = renderSystemRef.current.displayModes.primary;
+    const currentPreview1 = renderSystemRef.current.displayModes.preview1;
+    const currentPreview2 = renderSystemRef.current.displayModes.preview2;
 
     // Update display modes and content labels
     if (clickedPreviewNum === 1) {
-      appRef.current.setDisplayMode({
+      renderSystemRef.current.setDisplayMode({
         primary: currentPreview1,
         preview1: currentPrimary,
       });
@@ -93,7 +95,7 @@ export const WaveSimulator = () => {
         preview1: prev.primary,
       }));
     } else if (clickedPreviewNum === 2) {
-      appRef.current.setDisplayMode({
+      renderSystemRef.current.setDisplayMode({
         primary: currentPreview2,
         preview2: currentPrimary,
       });
@@ -215,7 +217,7 @@ export const WaveSimulator = () => {
         />
       </div>
 
-      <ConfigModal
+      <ConfigEditor
         isOpen={isConfigModalOpen}
         onClose={() => setIsConfigModalOpen(false)}
         configManager={configManager}
