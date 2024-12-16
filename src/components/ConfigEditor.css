@@ -4,160 +4,174 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background-color: rgba(0, 0, 0, 0.5);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    z-index: 100;
 }
 
 .modal-content {
-    background: #1a1a1a;
-    color: #fff;
+    width: 600px;
+    background-color: #1a1a1a;
     border-radius: 8px;
-    padding: 24px;
-    width: 90%;
-    max-width: 800px;
-    max-height: 90vh;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    overflow-y: auto;
+    border: 1px solid #333;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.modal-content.modified {
+    border: 2px solid #3b82f6;
 }
 
 .modal-header {
-    margin-bottom: -8px;
+    padding: 0.5rem;
+    border-bottom: 1px solid #333;
 }
 
-.modal-title {
-    font-size: 0.9rem;
-    color: #aaa;
-    font-weight: normal;
+.modal-header h2 {
     margin: 0;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #e5e7eb;
 }
 
-.modal-controls {
+.modal-body {
+    padding: 1rem;
+    padding-bottom: 0.5rem;
+}
+
+.control-group {
     display: flex;
-    gap: 8px;
-    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
 }
 
-.modal-controls select {
+.control-group select {
     flex: 1;
-    padding: 8px;
-    border-radius: 4px;
-    background: #2a2a2a;
-    color: #fff;
-    border: 1px solid #3a3a3a;
 }
 
-.modal-fields {
+.form-fields {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 1rem;
 }
 
 .field {
     display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.field.inline {
+    flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: 1rem;
+}
+
+.field.inline label {
+    flex: 0 0 100px; /* Fixed width for labels */
+}
+
+.field.inline input {
+    flex: 1;
 }
 
 .field label {
-    font-size: 0.9rem;
-    color: #aaa;
-    min-width: 85px;
+    font-size: 0.875rem;
+    color: #e5e7eb;
+    font-weight: bold;
 }
 
-.field input {
-    flex: 1;
-    padding: 6px 8px;
+input,
+select,
+textarea,
+button {
+    padding: 0.5rem;
+    background-color: #333;
+    border: 1px solid #444;
     border-radius: 4px;
-    background: #2a2a2a;
-    color: #fff;
-    border: 1px solid #3a3a3a;
+    color: #e5e7eb;
 }
 
-.field input:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-}
-
-.config-editor {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
-    min-height: 0;
-}
-
-.config-editor label {
-    font-size: 0.9rem;
-    color: #aaa;
-}
-
-.config-editor textarea {
-    flex: 1;
-    min-height: 300px;
-    padding: 12px;
-    border-radius: 4px;
-    background: #2a2a2a;
-    color: #fff;
-    border: 1px solid #3a3a3a;
+textarea {
+    height: 20rem;
     font-family: monospace;
-    font-size: 14px;
-    resize: none;
+    resize: vertical;
 }
 
-.config-editor textarea:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
+.message {
+    min-height: 1.5rem;
+    padding: 0.25rem 0;
+    font-size: 0.875rem;
 }
 
-.error-message {
-    color: #ff4444;
-    font-size: 0.9rem;
-    margin-top: 4px;
+.message.error {
+    color: #f87171;
 }
 
-.modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
+.message.info {
+    color: #9ca3af;
 }
 
 button {
-    padding: 8px 16px;
-    border-radius: 4px;
-    border: 1px solid #3a3a3a;
-    background: #2a2a2a;
-    color: #fff;
     cursor: pointer;
+    transition: background-color 0.2s;
 }
 
-button:hover {
-    background: #3a3a3a;
+button:hover:not(:disabled) {
+    background-color: #444;
 }
 
 button:disabled {
-    opacity: 0.7;
+    opacity: 0.5;
     cursor: not-allowed;
 }
 
-button.primary {
-    background: #4a4af4;
-    border-color: #4a4af4;
+.modal-footer {
+    padding: 1rem;
+    border-top: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
 }
 
-button.primary:hover {
-    background: #5a5af4;
+.left-buttons,
+.right-buttons {
+    display: flex;
+    gap: 0.5rem;
 }
 
-button.run-only {
-    background: #2e7d32;
-    border-color: #2e7d32;
+.save-button {
+    background-color: #2563eb;
 }
 
-button.run-only:hover {
-    background: #388e3c;
+.save-button:hover:not(:disabled) {
+    background-color: #1d4ed8;
+}
+
+.delete-button {
+    background-color: #dc2626;
+}
+
+.delete-button:hover:not(:disabled) {
+    background-color: #b91c1c;
+}
+
+.delete-button:disabled {
+    background-color: #881337;
+}
+
+.run-button {
+    background-color: #059669;
+}
+
+.run-button:hover:not(:disabled) {
+    background-color: #047857;
+}
+
+.cancel-button {
+    background-color: #4b5563;
+}
+
+.cancel-button:hover {
+    background-color: #374151;
 }
