@@ -95,7 +95,7 @@ export const ProgressGraph = ({
   // Set up the update cycle
   useEffect(() => {
     const updateData = () => {
-      const progress = getProgress();
+      const progress = getProgress() ?? [];
       const newPoint = progress[progress.length - 1];
 
       // Only update if values have changed
