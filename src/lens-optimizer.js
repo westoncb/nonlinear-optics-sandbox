@@ -1,7 +1,7 @@
 import { getUpdateStrategies } from "../update-strategies.js";
 import { polar } from "./util.js";
 
-export class Simulation {
+export class LensOptimizer {
   constructor(config) {
     this.config = config;
 

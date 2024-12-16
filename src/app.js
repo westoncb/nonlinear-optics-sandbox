@@ -1,4 +1,4 @@
-import { Simulation } from "./lens-optimizer.js";
+import { LensOptimizer } from "./lens-optimizer.js";
 import { webgl, stats, scaleDataForDisplay } from "./util.js";
 import {
   vertexShaderSource,
@@ -15,7 +15,7 @@ const DisplayMode = {
 export class App {
   constructor(config) {
     this.config = config.data;
-    this.simulation = new Simulation(this.config);
+    this.lensOptimizer = new LensOptimizer(this.config);
     this.isRunning = false;
 
     console.log("CONFIG", this.config);
@@ -410,7 +410,7 @@ export class App {
   }
 
   updateLensTexture() {
-    const lensData = this.simulation.getLensData(
+    const lensData = this.lensOptimizer.getLensData(
       this.config.gridSize,
       this.config.gridSize,
     );
@@ -435,7 +435,7 @@ export class App {
     const shgData = this.readFieldData(this.shgTextures[this.current]);
 
     if (!this.config.disableAdaptation) {
-      this.simulation.updateLens(
+      this.lensOptimizer.updateLens(
         fundamentalData,
         shgData,
         this.config.gridSize,
