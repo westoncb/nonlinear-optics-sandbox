@@ -9,15 +9,16 @@ export const WaveSimulator = () => {
   const mainContainerRef = useRef(null);
   const appRef = useRef(null);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-  const [gridSize, setGridSize] = useState(constants.GRID_SIZE);
   const [getProgress, setGetProgress] = useState(() => () => [
     {
       iteration: 0,
       metric: 0,
     },
   ]);
-  const [config, setConfig] = useState(canonicalConfigs[0]);
+
   const configManager = useRef(new ConfigManager()).current;
+  const [config, setConfig] = useState(canonicalConfigs[0]);
+  const [gridSize, setGridSize] = useState(config.data.gridSize);
 
   // Track which content is shown in each canvas
   const [canvasContent, setCanvasContent] = useState({
@@ -47,8 +48,8 @@ export const WaveSimulator = () => {
       }
 
       // Set up progress function once app is initialized
-      if (appRef.current?.simulation.getProgress) {
-        setGetProgress(() => () => appRef.current.simulation.getProgress());
+      if (appRef.current?.lensOptimizer.getProgress) {
+        setGetProgress(() => () => appRef.current?.lensOptimizer.getProgress());
       }
 
       appRef.current.start();
@@ -69,7 +70,7 @@ export const WaveSimulator = () => {
   const calculatePrimarySize = (containerRef) => {
     if (!containerRef.current) return null;
     const containerHeight = containerRef.current.clientHeight;
-    return Math.min(containerHeight - 40, window.innerWidth);
+    return Math.min(containerHeight, window.innerWidth);
   };
 
   const handlePreviewClick = (clickedPreviewNum) => {

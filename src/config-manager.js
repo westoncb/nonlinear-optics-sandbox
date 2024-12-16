@@ -1,14 +1,14 @@
 export const constants = {
+  GRID_SIZE: 256,
   PREVIEW_SIZE: 200,
-  GRID_SIZE: 512, // because of the some react/canvas nuances this needs to be available before first render; putting it here as a workaround
 };
 
 // Default configuration values
 const defaultConfigData = {
   // Core simulation parameters
-  dt: 0.2,
+  dt: 0.05,
   dx: 1.0,
-  gridSize: constants.GRID_SIZE,
+  gridSize: 256,
   damping: 0.9999,
   c: 1.0,
   use9PointStencil: true,
@@ -50,6 +50,7 @@ const updateDerivedValues = (fullConfig) => {
     ...fullConfig,
     data: {
       ...config,
+      gridSize: constants.GRID_SIZE, // overriding config value to deal with a bug where changing grid size at runtime breaks something in the webgl/canvas setup
       boundaryR0:
         (config.gridSize / 2 - config.margin) / (1 + config.boundaryAlpha),
     },
@@ -61,8 +62,8 @@ export const canonicalConfigs = [
   {
     data: defaultConfigData,
     metadata: {
-      name: "High Learning Rate",
-      description: "Configuration with increased learning rate and hill power",
+      name: "Test Config",
+      description: "typically what i use to test new ideas quickly",
     },
   },
   // Add more canonical configs here
