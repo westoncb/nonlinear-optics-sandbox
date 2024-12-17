@@ -1,3 +1,5 @@
+// @hmr-reset
+
 import { useState, useEffect, useRef } from "react";
 import { RenderSystem } from "../render-system";
 import { ConfigManager, constants, canonicalConfigs } from "../config-manager";
