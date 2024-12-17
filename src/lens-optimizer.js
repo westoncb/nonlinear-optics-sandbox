@@ -1,4 +1,4 @@
-import { getUpdateStrategies } from "../update-strategies.js";
+import { getUpdateStrategies } from "./update-strategies.js";
 import { polar } from "./util.js";
 
 export class LensOptimizer {
