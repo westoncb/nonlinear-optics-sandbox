@@ -1,35 +1,38 @@
 export const constants = {
-  GRID_SIZE: 256,
+  GRID_SIZE: 512,
   PREVIEW_SIZE: 200,
 };
 
 // Default configuration values
 const defaultConfigData = {
-  dt: 0.08,
+  dt: 0.2,
   dx: 1,
-  gridSize: 256,
-  damping: 0.9999,
+  gridSize: constants.GRID_SIZE,
+  damping: 1,
   c: 1,
   use9PointStencil: true,
-  chi: 0.4,
-  chi_ratio: -8,
-  shg_Isat: 0.15,
-  kerr_Isat: 0.3,
-  boundaryAlpha: 0.25,
-  boundaryM: 24,
-  margin: 12,
-  boundaryReflectivity: "0.98",
-  lensRadius: 48,
-  fresnelZones: 40,
-  numSectors: 800,
-  hillPower: 3,
-  updateStrategy: "o1SecondOptimal",
-  learningRate: 0.000015,
+  chi: 0.9, // Even stronger nonlinearity
+  chi_ratio: -8, // Increased χ(3) effect
+  shg_Isat: 0.06, // Lower saturation threshold
+  kerr_Isat: 0.08, // Lower Kerr saturation
+  boundaryAlpha: 0.1,
+  boundaryM: 8, // Reduced for cleaner geometric patterns
+  margin: 0,
+  boundaryReflectivity: "1.",
+  lensRadius: 64, // Larger interaction region
+  fresnelZones: 12, // More radial resolution
+  numSectors: 84, // Even finer angular resolution
+  hillPower: 2,
+  updateStrategy: "crystallineVortex",
+  learningRate: 1e-5,
   optimizationInterval: 1,
-  initialPulseAmplitude: 120,
-  initialPulsePhaseShift: 0.08,
-  disableAdaptation: false,
-  boundaryR0: 92.8,
+  pulseInterval: 200,
+  initialPulseAmplitude: 24,
+  initialPulsePhaseShift: 0.0,
+  initialNoiseScale: 0,
+  initialBeamWidth: 3,
+  useSimplePulse: false,
+  disableAdaptation: true,
 };
 
 const updateDerivedValues = (fullConfig) => {
@@ -50,7 +53,6 @@ const updateDerivedValues = (fullConfig) => {
   };
 };
 
-// Canonical configs that ship with the code
 export const canonicalConfigs = [
   {
     data: defaultConfigData,
@@ -59,8 +61,7 @@ export const canonicalConfigs = [
       description: "typically what i use to test new ideas quickly",
     },
   },
-  // Add more canonical configs here
-];
+].map(updateDerivedValues);
 
 export class ConfigManager {
   constructor() {
