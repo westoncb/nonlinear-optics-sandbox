@@ -169,6 +169,8 @@ export class RenderSystem {
       "u_boundaryAlpha",
       "u_boundaryM",
       "u_updateTarget",
+      "u_frameCount",
+      "u_pulseInterval",
       "u_current",
       "u_previous",
       "u_lens",
@@ -331,6 +333,25 @@ export class RenderSystem {
     this.initializeFields();
   }
 
+  // Better PRNG implementation
+  mulberry32(seed) {
+    return function () {
+      let t = (seed += 0x6d2b79f5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Gaussian random number generator using Box-Muller
+  gaussianRandom(prng) {
+    const u1 = prng();
+    const u2 = prng();
+    const radius = Math.sqrt(-2.0 * Math.log(u1));
+    const theta = 2.0 * Math.PI * u2;
+    return radius * Math.cos(theta);
+  }
+
   initializeFields() {
     const fundamentalData = new Float32Array(
       this.config.gridSize * this.config.gridSize * 4,
@@ -339,17 +360,86 @@ export class RenderSystem {
       this.config.gridSize * this.config.gridSize * 4,
     );
 
+    // Initialize PRNG for thermal noise
+    const seed = Math.floor(Math.random() * 2 ** 32);
+    const prng = this.mulberry32(seed);
+
+    // Physical constants for thermal noise
+    const kB = 1.380649e-23;
+    const T = 295.15;
+    const scalingFactor = this.config.initialNoiseScale;
+    const sigma = Math.sqrt(kB * T) * scalingFactor;
+
+    // Gaussian beam parameters
+    const w0 = this.config.initialBeamWidth; // beam waist
+    const z = 0; // assume we're at beam waist
+    const lambda = 1; // normalized wavelength
+    const k = (2 * Math.PI) / lambda;
+    const zR = (Math.PI * w0 * w0) / lambda; // Rayleigh range
+
     const centerX = Math.floor(this.config.gridSize / 2);
     const centerY = Math.floor(this.config.gridSize / 2);
 
-    for (let j = -3; j <= 3; j++) {
-      for (let i = -3; i <= 3; i++) {
-        const x = centerX + i;
-        const y = centerY + j;
+    for (let y = 0; y < this.config.gridSize; y++) {
+      for (let x = 0; x < this.config.gridSize; x++) {
         const idx = (y * this.config.gridSize + x) * 4;
-        fundamentalData[idx] =
-          Math.exp(-(i * i + j * j) / 4) * this.config.initialPulseAmplitude;
-        fundamentalData[idx + 1] = this.config.initialPulsePhaseShift;
+        const amp = sigma * this.gaussianRandom(prng);
+        const phase = 2.0 * Math.PI * prng();
+        fundamentalData[idx] = amp * Math.cos(phase);
+        fundamentalData[idx + 1] = amp * Math.sin(phase);
+      }
+    }
+
+    if (this.config.useSimplePulse) {
+      const centerX = Math.floor(this.config.gridSize / 2);
+      const centerY = Math.floor(this.config.gridSize / 2);
+      const beamWidth = this.config.initialBeamWidth;
+
+      for (let j = -beamWidth; j <= beamWidth; j++) {
+        for (let i = -beamWidth; i <= beamWidth; i++) {
+          const x = centerX + i;
+          const y = centerY + j;
+          const idx = (y * this.config.gridSize + x) * 4;
+          fundamentalData[idx] =
+            Math.exp(-(i * i + j * j) / 4) * this.config.initialPulseAmplitude;
+          fundamentalData[idx + 1] = this.config.initialPulsePhaseShift;
+        }
+      }
+    } else {
+      // Add Gaussian beam with phase terms
+      for (let y = 0; y < this.config.gridSize; y++) {
+        for (let x = 0; x < this.config.gridSize; x++) {
+          const idx = (y * this.config.gridSize + x) * 4;
+
+          const dx = x - centerX;
+          const dy = y - centerY;
+          const r2 = dx * dx + dy * dy;
+
+          // Beam width at z
+          const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
+
+          // Radius of curvature
+          const R = z === 0 ? Infinity : z * (1 + (zR / z) ** 2);
+
+          // Gouy phase
+          const gouyPhase = Math.atan(z / zR);
+
+          // Total phase including wavefront curvature and Gouy phase
+          const phase =
+            -k * z -
+            (R === Infinity ? 0 : (k * r2) / (2 * R)) +
+            gouyPhase +
+            this.config.initialPulsePhaseShift;
+
+          const amplitude =
+            this.config.initialPulseAmplitude *
+            (w0 / w) *
+            Math.exp(-r2 / (w * w));
+
+          // Add to existing thermal noise
+          fundamentalData[idx] += amplitude * Math.cos(phase);
+          fundamentalData[idx + 1] += amplitude * Math.sin(phase);
+        }
       }
     }
 
@@ -479,7 +569,10 @@ export class RenderSystem {
     this.runSimulationStep();
 
     // Update lens occasionally
-    if (this.frameCount % this.config.optimizationInterval === 0) {
+    if (
+      this.frameCount % this.config.optimizationInterval === 0 &&
+      this.frameCount > 10
+    ) {
       this.updateLens();
     }
 
@@ -547,6 +640,8 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_boundaryAlpha, this.config.boundaryAlpha);
     gl.uniform1f(uniforms.u_boundaryM, this.config.boundaryM);
     gl.uniform1i(uniforms.u_updateTarget, updateTarget);
+    gl.uniform1i(uniforms.u_pulseInterval, this.config.pulseInterval);
+    gl.uniform1i(uniforms.u_frameCount, this.frameCount + 1);
 
     // current/previous textures
     gl.activeTexture(gl.TEXTURE0);

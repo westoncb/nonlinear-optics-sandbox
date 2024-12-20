@@ -30,6 +30,8 @@ export const getSimulationShaderSource = (config) => {
   uniform float u_boundaryAlpha;
   uniform float u_boundaryM;
   uniform int u_updateTarget;
+  uniform int u_frameCount;
+  uniform int u_pulseInterval;
 
   const float PI = 3.14159265358979323846;
 
@@ -42,6 +44,18 @@ export const getSimulationShaderSource = (config) => {
       float theta = atan(rel.y, rel.x);
       float boundaryRadius = u_boundaryR0 * (1.0 + u_boundaryAlpha * cos(u_boundaryM * theta));
       return r <= boundaryRadius;
+  }
+
+  vec2 calculatePhaseGradients(vec2 pos, vec2 texel, vec4 center) {
+      vec4 right = texture(u_current, (pos + vec2(1.0, 0.0)) * texel);
+      vec4 up = texture(u_current, (pos + vec2(0.0, -1.0)) * texel);
+      vec4 left = texture(u_current, (pos + vec2(-1.0, 0.0)) * texel);
+      vec4 down = texture(u_current, (pos + vec2(0.0, 1.0)) * texel);
+
+      float dphase_dx = (atan(right.y, right.x) - atan(left.y, left.x)) / (2.0 * u_dx);
+      float dphase_dy = (atan(down.y, down.x) - atan(up.y, up.x)) / (2.0 * u_dx);
+
+      return vec2(dphase_dx, dphase_dy);
   }
 
   vec2 ninePointLaplacian(vec2 pos, vec2 texel, vec4 center) {
@@ -57,13 +71,9 @@ export const getSimulationShaderSource = (config) => {
       vec4 downleft  = texture(u_current, (pos + vec2(-1.0,  1.0)) * texel);
       vec4 downright = texture(u_current, (pos + vec2( 1.0,  1.0)) * texel);
 
-      // Compute weighted Laplacian
       return (
-          // Direct neighbors (2/3 weight each)
           (left.xy + right.xy + up.xy + down.xy) * (2.0/3.0) +
-          // Diagonal neighbors (1/6 weight each)
           (upleft.xy + upright.xy + downleft.xy + downright.xy) * (1.0/6.0) +
-          // Center point (-4 weight)
           center.xy * -4.0
       );
   }
@@ -78,8 +88,6 @@ export const getSimulationShaderSource = (config) => {
   }
 
   float calculateRefractiveIndex(float wavelength, float temperature) {
-      // Simplified Sellmeier equation
-      // Parameters would be material-specific
       float B1 = 1.03961212;
       float B2 = 0.231792344;
       float B3 = 1.01046945;
@@ -96,27 +104,21 @@ export const getSimulationShaderSource = (config) => {
   }
 
   vec4 calculatePhaseMismatchTerm(vec2 pos, vec2 texel) {
-      // Calculate wave vectors with complex-valued components
       float wavelength_fund = 800.;
       float wavelength_shg = wavelength_fund * 0.5;
-
       const float temperature = 22.;
 
       float n_fund = calculateRefractiveIndex(wavelength_fund, temperature);
       float n_shg = calculateRefractiveIndex(wavelength_shg, temperature);
 
-      // Wave vector with dispersion considerations
       float k_fund_real = 2.0 * PI * n_fund / wavelength_fund;
-      float k_fund_imag = 0.0; // Absorption/gain terms could be added here
-
+      float k_fund_imag = 0.0;
       float k_shg_real = 2.0 * PI * n_shg / wavelength_shg;
       float k_shg_imag = 0.0;
 
-      // Phase mismatch calculation
       float delta_k_real = k_shg_real - 2.0 * k_fund_real;
       float delta_k_imag = k_shg_imag - 2.0 * k_fund_imag;
 
-      // Quasi-phase-matching modulation with complex representation
       float qpm_period = 2.0 * PI / sqrt(delta_k_real * delta_k_real + delta_k_imag * delta_k_imag);
       float qpm_modulation_real = cos(pos.x / qpm_period * delta_k_real);
       float qpm_modulation_imag = sin(pos.x / qpm_period * delta_k_imag);
@@ -146,41 +148,82 @@ export const getSimulationShaderSource = (config) => {
       );
 
       if (u_updateTarget == 0) {
-          // Fundamental field update
-          float amp2 = dot(center.xy, center.xy);
+        // Fundamental field update
+        float amp2 = dot(center.xy, center.xy);
+        float kerrSaturationFactor = 1.0 / (1.0 + amp2/u_kerr_Isat);
+        float n2_effective = u_chi * u_chi * u_chi_ratio;
+        float kerrStrength = n2_effective * amp2 * kerrSaturationFactor;
+        float local_c2 = u_c * u_c * (1.0 + kerrStrength);
 
-          // Calculate Kerr effect with its own saturation
-          // n2 is now derived from chi^2 * chi_ratio for realistic scaling
-          float kerrSaturationFactor = 1.0 / (1.0 + amp2/u_kerr_Isat);
-          float n2_effective = u_chi * u_chi * u_chi_ratio;
-          float local_c2 = u_c * u_c * (1.0 + (n2_effective * amp2 * kerrSaturationFactor));
+        vec2 new_val = (2.0 * center.xy - old.xy + local_c2 * u_dt * u_dt * lensedLaplacian) * u_damping;
 
-          vec2 new_val = (2.0 * center.xy - old.xy + local_c2 * u_dt * u_dt * lensedLaplacian) * u_damping;
-          fragColor = vec4(new_val, 0.0, 1.0);
+        // Add pulsed injection
+        if (u_frameCount % u_pulseInterval == 0 && u_pulseInterval > 0) {
+              vec4 lens = texture(u_lens, pos * texel);
+
+              // Gaussian beam parameters
+              float w0 = 3.0;
+              vec2 center = u_resolution * 0.5;
+              vec2 rel = pos - center;
+              float r2 = dot(rel, rel);
+
+              // Calculate pulse amplitude
+              float amplitude = 1. * exp(-r2/(w0*w0));
+              float phase = 0.0;
+
+              // Create and lens the new field
+              vec2 pulseField = amplitude * vec2(cos(phase), sin(phase));
+              vec2 lensedPulse = vec2(
+                  pulseField.x * lens.x - pulseField.y * lens.y,
+                  pulseField.x * lens.y + pulseField.y * lens.x
+              );
+
+              new_val += lensedPulse;
+        }
+
+        // Calculate metrics for fundamental field
+        vec2 phaseGrad = calculatePhaseGradients(pos, texel, center);
+
+        fragColor = vec4(
+            new_val,                // xy: updated field
+            length(phaseGrad),      // z: phase gradient magnitude
+            kerrStrength           // w: Kerr nonlinearity strength
+        );
       } else {
           // SHG field update
           float shg_amp2 = dot(center.xy, center.xy);
-
-          // Use Kerr saturation for the refractive index modulation of SHG field
           float kerrSaturationFactor = 1.0 / (1.0 + shg_amp2/u_kerr_Isat);
           float n2_effective = u_chi * u_chi * u_chi_ratio;
-          float local_c2 = u_c * u_c * (1.0 + (n2_effective * shg_amp2 * kerrSaturationFactor));
+          float kerrStrength = n2_effective * shg_amp2 * kerrSaturationFactor;
+          float local_c2 = u_c * u_c * (1.0 + kerrStrength);
 
           vec4 fund = texture(u_fundamental, pos * texel);
           float fund_amp2 = dot(fund.xy, fund.xy);
-
-          // Use SHG saturation for the frequency conversion process
           float shgSaturationFactor = 1.0 / (1.0 + fund_amp2/u_shg_Isat);
+
           vec4 phaseMismatchTerm = calculatePhaseMismatchTerm(pos, texel);
           vec2 sourceTerm = vec2(
               u_chi * fund_amp2 * shgSaturationFactor * phaseMismatchTerm.x,
               u_chi * fund_amp2 * shgSaturationFactor * phaseMismatchTerm.y
           );
 
+          // Calculate phase matching efficiency
+          float localPhaseMatch = dot(phaseMismatchTerm.xy, sourceTerm) /
+                                 (length(phaseMismatchTerm.xy) * length(sourceTerm) + 1e-10);
+
+          // Calculate χ(2)/χ(3) ratio
+          float chiRatio = (u_chi * fund_amp2 * shgSaturationFactor) /
+                          (n2_effective * shg_amp2 * kerrSaturationFactor + 1e-10);
+
           vec2 new_val = (2.0 * center.xy - old.xy +
                         local_c2 * u_dt * u_dt * lensedLaplacian +
                         u_dt * u_dt * sourceTerm) * u_damping;
-          fragColor = vec4(new_val, 0.0, 1.0);
+
+          fragColor = vec4(
+              new_val,           // xy: updated field
+              localPhaseMatch,   // z: phase matching efficiency
+              chiRatio          // w: χ(2)/χ(3) ratio
+          );
       }
   }`;
 };
@@ -209,6 +252,12 @@ void main() {
   if (u_displayMode == 2) {  // Lens display
       vec2 center = vec2(0.5, 0.5);
       vec2 fromCenter = uv - center;
+
+      // this works because we always scale the lens to the full extent of the canvas
+      if (length(fromCenter) > .5) {
+          fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+          return;
+      }
 
       // Scale our sampling coordinates to only look within the lens radius
       vec2 scaledUV = center + fromCenter * (u_lensRadius / (u_resolution.x * 0.5));
