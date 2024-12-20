@@ -104,27 +104,27 @@ export const getSimulationShaderSource = (config) => {
   }
 
   vec4 calculatePhaseMismatchTerm(vec2 pos, vec2 texel) {
-      float wavelength_fund = 800.;
-      float wavelength_shg = wavelength_fund * 0.5;
-      const float temperature = 22.;
+        float wavelength_fund = 40.0;
+        float wavelength_shg = wavelength_fund * 0.5;  // = 10.0
+        const float temperature = 22.0;  // Room temperature in Celsius
 
-      float n_fund = calculateRefractiveIndex(wavelength_fund, temperature);
-      float n_shg = calculateRefractiveIndex(wavelength_shg, temperature);
+        float n_fund = calculateRefractiveIndex(wavelength_fund, temperature);
+        float n_shg = calculateRefractiveIndex(wavelength_shg, temperature);
 
-      float k_fund_real = 2.0 * PI * n_fund / wavelength_fund;
-      float k_fund_imag = 0.0;
-      float k_shg_real = 2.0 * PI * n_shg / wavelength_shg;
-      float k_shg_imag = 0.0;
+        float k_fund_real = 2.0 * PI * n_fund / wavelength_fund;
+        float k_fund_imag = 0.0;
+        float k_shg_real = 2.0 * PI * n_shg / wavelength_shg;
+        float k_shg_imag = 0.0;
 
-      float delta_k_real = k_shg_real - 2.0 * k_fund_real;
-      float delta_k_imag = k_shg_imag - 2.0 * k_fund_imag;
+        float delta_k_real = k_shg_real - 2.0 * k_fund_real;
+        float delta_k_imag = k_shg_imag - 2.0 * k_fund_imag;
 
-      float qpm_period = 2.0 * PI / sqrt(delta_k_real * delta_k_real + delta_k_imag * delta_k_imag);
-      float qpm_modulation_real = cos(pos.x / qpm_period * delta_k_real);
-      float qpm_modulation_imag = sin(pos.x / qpm_period * delta_k_imag);
+        float qpm_period = 2.0 * PI / sqrt(delta_k_real * delta_k_real + delta_k_imag * delta_k_imag);
+        float qpm_modulation_real = cos(pos.x / qpm_period * delta_k_real);
+        float qpm_modulation_imag = sin(pos.x / qpm_period * delta_k_imag);
 
-      return vec4(qpm_modulation_real, qpm_modulation_imag, 0.0, 1.0);
-  }
+        return vec4(qpm_modulation_real, qpm_modulation_imag, 0.0, 1.0);
+    }
 
   void main() {
       vec2 pos = gl_FragCoord.xy;
