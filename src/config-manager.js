@@ -23,7 +23,7 @@ const defaultConfigData = {
   fresnelZones: 12, // More radial resolution
   numSectors: 84, // Even finer angular resolution
   hillPower: 2,
-  updateStrategy: "crystallineVortex",
+  updateStrategy: "solitonStrategy",
   learningRate: 1e-5,
   optimizationInterval: 1,
   pulseInterval: 200,
@@ -32,10 +32,18 @@ const defaultConfigData = {
   initialNoiseScale: 0,
   initialBeamWidth: 3,
   useSimplePulse: false,
-  disableAdaptation: true,
+  disableAdaptation: false,
 };
 
-const updateDerivedValues = (fullConfig) => {
+export const referenceConfig = {
+  data: defaultConfigData,
+  metadata: {
+    name: "Reference config",
+    description: "default canonical config without derived values",
+  },
+};
+
+export const updateDerivedValues = (fullConfig) => {
   // Create a new config object with gridSize enforced from constants
   const newData = {
     ...fullConfig.data,

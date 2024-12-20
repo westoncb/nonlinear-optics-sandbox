@@ -1,18 +1,26 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { canonicalConfigs } from "../config-manager";
+import { canonicalConfigs, updateDerivedValues } from "../config-manager";
 import "./ConfigEditor.css";
 
 // Detect OS for shortcut display
 const isMac = navigator.platform.toLowerCase().includes("mac");
 const modifierKey = isMac ? "⌘" : "Ctrl";
 
+const formatConfigData = (data) => {
+  // Convert to string with 2-space indentation
+  const jsonString = JSON.stringify(data, null, 2);
+
+  // Remove quotes around property names
+  return jsonString.replace(/"([^"]+)":/g, "$1:");
+};
+
 const initialEditorState = {
   selectedConfigId: canonicalConfigs[0].metadata.name,
   form: {
     name: canonicalConfigs[0].metadata.name,
     description: canonicalConfigs[0].metadata.description,
-    data: JSON.stringify(canonicalConfigs[0].data, null, 2),
+    data: formatConfigData(canonicalConfigs[0].data),
   },
   validation: {
     message: { text: `Press ${modifierKey}+Enter to run`, isError: false },
@@ -31,14 +39,21 @@ export const ConfigEditor = ({
 }) => {
   const [state, setState] = useState(initialEditorState);
   const configs = configManager.getAllConfigs();
+  const textareaRef = useRef(null);
 
   const parseConfigData = (str) => {
     try {
+      // Remove comments and clean up whitespace
       const sanitized = str
-        .replace(/\/\/.*/g, "")
-        .replace(/^\s*{/, "({")
-        .replace(/}\s*$/, "})");
-      const data = eval(sanitized);
+        .replace(/\/\/.*/g, "") // Remove single-line comments
+        .replace(/\/\*[\s\S]*?\*\//g, "") // Remove multi-line comments
+        .trim();
+
+      // If it starts with a plain '{', wrap it in parentheses
+      const wrapped = sanitized.startsWith("{") ? `(${sanitized})` : sanitized;
+
+      // Use Function constructor to evaluate as JS object
+      const data = new Function(`return ${wrapped}`)();
       return { success: true, data };
     } catch (e) {
       return {
@@ -50,16 +65,16 @@ export const ConfigEditor = ({
 
   const validateConfig = useCallback((data) => {
     const errors = {};
-    const referenceConfig = canonicalConfigs[0].data;
+    const referenceConfig = canonicalConfigs[0];
 
-    Object.keys(referenceConfig).forEach((key) => {
+    Object.keys(referenceConfig.data).forEach((key) => {
       if (!(key in data)) {
         errors[key] = `Missing required parameter: ${key}`;
       }
     });
 
     Object.keys(data).forEach((key) => {
-      if (!(key in referenceConfig)) {
+      if (!(key in referenceConfig.data)) {
         errors[key] = `Unrecognized parameter: ${key}`;
       }
     });
@@ -67,29 +82,7 @@ export const ConfigEditor = ({
     return errors;
   }, []);
 
-  const handleConfigSelect = useCallback((config) => {
-    const formattedData = JSON.stringify(config.data, null, 2);
-    setState({
-      selectedConfigId: config.metadata.name,
-      form: {
-        name: config.metadata.name,
-        description: config.metadata.description,
-        data: formattedData,
-      },
-      validation: {
-        message: { text: `Press ${modifierKey}+Enter to run`, isError: false },
-        parsed: config.data,
-      },
-      mode: config.isCanonical ? "viewing" : "editing",
-      originalText: formattedData,
-    });
-  }, []);
-
   useEffect(() => {
-    if (isOpen && !state.selectedConfigId) {
-      handleConfigSelect(configs.get(canonicalConfigs[0].metadata.name));
-    }
-
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         onClose();
@@ -115,7 +108,9 @@ export const ConfigEditor = ({
         if (!parseResult.success) {
           message = { text: parseResult.error, isError: true };
         } else {
-          const validationErrors = validateConfig(parseResult.data);
+          const validationErrors = validateConfig(
+            updateDerivedValues(parseResult).data,
+          );
           const errorMessages = Object.values(validationErrors);
           message =
             errorMessages.length > 0
@@ -136,6 +131,26 @@ export const ConfigEditor = ({
     [validateConfig],
   );
 
+  const handleConfigSelect = useCallback(
+    (config) => {
+      // First update the basic state that updateForm doesn't handle
+      setState((prev) => ({
+        ...prev,
+        selectedConfigId: config.metadata.name,
+        mode: config.isCanonical ? "viewing" : "editing",
+        originalText: formatConfigData(config.data),
+      }));
+
+      // Then use updateForm to handle the form state and validation
+      updateForm({
+        name: config.metadata.name,
+        description: config.metadata.description,
+        data: formatConfigData(config.data),
+      });
+    },
+    [updateForm],
+  );
+
   const handleSave = () => {
     if (!state.validation.parsed) return;
     onSave(state.validation.parsed, {
@@ -146,9 +161,21 @@ export const ConfigEditor = ({
   };
 
   const handleRun = () => {
-    if (!state.validation.parsed) return;
+    // Get the current value directly from the textarea
+    const currentValue = textareaRef.current?.value || state.form.data;
+
+    const parseResult = parseConfigData(currentValue);
+    if (!parseResult.success) return;
+
+    const configData = updateDerivedValues(parseResult).data;
+    const validationErrors = validateConfig(configData);
+    if (Object.keys(validationErrors).length > 0) {
+      console.log("Validation Errors:", validationErrors, configData);
+      return;
+    }
+
     setConfig({
-      data: state.validation.parsed,
+      data: configData,
       metadata: {
         name: state.form.name,
         description: state.form.description,
@@ -159,8 +186,25 @@ export const ConfigEditor = ({
 
   const handleDelete = () => {
     if (window.confirm("Are you sure you want to delete this configuration?")) {
+      // Get list of configs before deletion
+      const configList = Array.from(configs.entries());
+      const currentIndex = configList.findIndex(
+        ([name]) => name === state.selectedConfigId,
+      );
+
+      // Delete the config
       configManager.deleteConfig(state.selectedConfigId);
-      onClose();
+
+      // Get updated list post-deletion
+      const updatedConfigs = configManager.getAllConfigs();
+      const updatedConfigList = Array.from(updatedConfigs.entries());
+
+      // If there are any configs left, select the next one (with wraparound)
+      if (updatedConfigList.length > 0) {
+        const nextIndex = currentIndex % updatedConfigList.length;
+        const [nextConfigName, nextConfig] = updatedConfigList[nextIndex];
+        handleConfigSelect(nextConfig);
+      }
     }
   };
 
@@ -242,6 +286,7 @@ export const ConfigEditor = ({
             <div className="field">
               <label>Configuration Data:</label>
               <textarea
+                ref={textareaRef}
                 value={state.form.data}
                 onChange={(e) => updateForm({ data: e.target.value })}
                 onInput={(e) => {
@@ -249,7 +294,6 @@ export const ConfigEditor = ({
                     setState((prev) => ({ ...prev, isDirty: false }));
                   }
                 }}
-                disabled={state.mode === "viewing"}
                 spellCheck={false}
               />
               <div
