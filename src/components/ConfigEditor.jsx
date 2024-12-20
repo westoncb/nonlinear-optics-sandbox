@@ -63,6 +63,11 @@ export const ConfigEditor = ({
     }
   };
 
+  const validateConfigData = (configData) => {
+    const validationErrors = validateConfig(configData);
+    return Object.keys(validationErrors).length === 0;
+  };
+
   const validateConfig = useCallback((data) => {
     const errors = {};
     const referenceConfig = canonicalConfigs[0];
@@ -233,11 +238,19 @@ export const ConfigEditor = ({
                 if (config) handleConfigSelect(config);
               }}
             >
-              {Array.from(configs.entries()).map(([name, config]) => (
-                <option key={name} value={name}>
-                  {name} {config.isCanonical ? "(Canonical)" : ""}
-                </option>
-              ))}
+              {Array.from(configs.entries()).map(([name, config]) => {
+                const isValid = validateConfigData(config.data);
+                return (
+                  <option
+                    key={name}
+                    value={name}
+                    className={`config-option ${!isValid ? "config-option-error" : ""}`}
+                  >
+                    {name} {config.isCanonical ? "(Canonical)" : ""}
+                    {!isValid ? " ⚠" : ""}{" "}
+                  </option>
+                );
+              })}
             </select>
 
             <button
