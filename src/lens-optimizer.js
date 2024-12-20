@@ -14,6 +14,28 @@ export class LensOptimizer {
           .map(() => ({ real: 1.0, imag: 0.0 })),
       );
 
+    this.fundMetrics = Array(config.fresnelZones)
+      .fill()
+      .map(() =>
+        Array(config.numSectors)
+          .fill()
+          .map(() => ({
+            phaseGradMag: 0,
+            kerrStrength: 0,
+          })),
+      );
+
+    this.shgMetrics = Array(config.fresnelZones)
+      .fill()
+      .map(() =>
+        Array(config.numSectors)
+          .fill()
+          .map(() => ({
+            phaseMatch: 0,
+            chiRatio: 0,
+          })),
+      );
+
     // Initialize Adam optimizer state
     this.adamState = adam.createState([config.fresnelZones, config.numSectors]);
 
@@ -44,6 +66,20 @@ export class LensOptimizer {
       .fill()
       .map(() => Array(this.config.numSectors).fill(0));
 
+    this.fundMetrics.forEach((zone) =>
+      zone.forEach((sector) => {
+        sector.phaseGradMag = 0;
+        sector.kerrStrength = 0;
+      }),
+    );
+
+    this.shgMetrics.forEach((zone) =>
+      zone.forEach((sector) => {
+        sector.phaseMatch = 0;
+        sector.chiRatio = 0;
+      }),
+    );
+
     const centerX = Math.floor(width / 2);
     const centerY = Math.floor(height / 2);
 
@@ -73,8 +109,18 @@ export class LensOptimizer {
 
             fundSum[coords.zone][coords.sector].real += fundReal;
             fundSum[coords.zone][coords.sector].imag += fundImag;
+            this.fundMetrics[coords.zone][coords.sector].phaseGradMag +=
+              fundamentalData[idx + 2];
+            this.fundMetrics[coords.zone][coords.sector].kerrStrength +=
+              fundamentalData[idx + 3];
+
             shgSum[coords.zone][coords.sector].real += shgReal;
             shgSum[coords.zone][coords.sector].imag += shgImag;
+            this.shgMetrics[coords.zone][coords.sector].phaseMatch +=
+              shgData[idx + 2];
+            this.shgMetrics[coords.zone][coords.sector].chiRatio +=
+              shgData[idx + 3];
+
             modeCount[coords.zone][coords.sector]++;
           }
         }
@@ -90,7 +136,7 @@ export class LensOptimizer {
     if (!updateStrategy)
       alert("couldn't find update strategy: " + this.config.updateStrategy);
 
-    let totalUpdateMagnitude = 0;
+    let totalLoss = 0;
     let countUpdates = 0;
 
     for (let z = 0; z < this.config.fresnelZones; z++) {
@@ -99,26 +145,24 @@ export class LensOptimizer {
           const fund = {
             real: fundSum[z][s].real / modeCount[z][s],
             imag: fundSum[z][s].imag / modeCount[z][s],
+            phaseGradMag: this.fundMetrics[z][s].phaseGradMag / modeCount[z][s],
+            kerrStrength: this.fundMetrics[z][s].kerrStrength / modeCount[z][s],
           };
           const shg = {
             real: shgSum[z][s].real / modeCount[z][s],
             imag: shgSum[z][s].imag / modeCount[z][s],
+            phaseMatch: this.shgMetrics[z][s].phaseMatch / modeCount[z][s],
+            chiRatio: this.shgMetrics[z][s].chiRatio / modeCount[z][s],
           };
 
-          let update;
-          if (updateStrategy.length > 3) {
-            // hierarchicalZones or others needing zone info
-            update = updateStrategy(
-              fund,
-              shg,
-              modeCount[z][s],
-              z,
-              s,
-              this.lensModes,
-            );
-          } else {
-            update = updateStrategy(fund, shg, modeCount[z][s]);
-          }
+          let { update, loss } = updateStrategy(
+            fund,
+            shg,
+            modeCount[z][s],
+            z,
+            s,
+            this.lensModes,
+          );
 
           // Update momentum estimates
           this.adamState.m_real[z][s] =
@@ -152,11 +196,7 @@ export class LensOptimizer {
           this.lensModes[z][s].real += deltaReal;
           this.lensModes[z][s].imag += deltaImag;
 
-          // Accumulate update magnitude for progress metric
-          const updateMag = Math.sqrt(
-            deltaReal * deltaReal + deltaImag * deltaImag,
-          );
-          totalUpdateMagnitude += updateMag;
+          totalLoss += loss;
           countUpdates++;
         }
       }
@@ -164,10 +204,10 @@ export class LensOptimizer {
 
     // Record progress metric: average update magnitude per iteration
     if (countUpdates > 0) {
-      const avgUpdateMag = totalUpdateMagnitude / countUpdates;
+      const avgLoss = totalLoss / countUpdates;
       this.progressHistory.push({
         iteration: this.adamState.t,
-        metric: avgUpdateMag,
+        metric: avgLoss,
       });
     }
 
