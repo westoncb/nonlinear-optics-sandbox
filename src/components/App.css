@@ -1,4 +1,4 @@
-.simulator {
+.app {
   min-height: 100vh;
   background: black;
   color: #e5e5e5;
@@ -59,6 +59,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
 
 .main-label {
@@ -93,4 +94,74 @@
 
 .config-button:hover {
   background: #3a3a3a;
+}
+
+.canvas-wrapper.fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: black;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.primary-canvas.fullscreen-canvas {
+  max-width: 95vw;
+  max-height: 95vh;
+  width: 95vmin !important;  /* Use vmin to maintain aspect ratio */
+  height: 95vmin !important; /* while maximizing size within viewport */
+}
+
+.fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: black;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.fullscreen-header {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1001;
+}
+
+.fullscreen-header button {
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 2rem;
+  cursor: pointer;
+  padding: 0.5rem;
+  width: 3rem;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.fullscreen-header button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.fullscreen-canvas {
+  max-width: 95vw;
+  max-height: 95vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }

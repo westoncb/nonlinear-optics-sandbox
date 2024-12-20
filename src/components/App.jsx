@@ -22,6 +22,18 @@ export const App = () => {
   const [config, setConfig] = useState(canonicalConfigs[0]);
   const [gridSize, setGridSize] = useState(config.data.gridSize);
 
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [isFullscreen]);
+
   // Track which content is shown in each canvas
   const [canvasContent, setCanvasContent] = useState({
     primary: "Fundamental field",
@@ -77,6 +89,10 @@ export const App = () => {
     return Math.min(containerHeight, window.innerWidth);
   };
 
+  const handlePrimaryCanvasClick = () => {
+    setIsFullscreen(true);
+  };
+
   const handlePreviewClick = (clickedPreviewNum) => {
     if (!renderSystemRef.current) return;
 
@@ -128,18 +144,20 @@ export const App = () => {
   }, []);
 
   return (
-    <div className="simulator">
+    <div className="app">
       <div className="top-bar">
         <div
           style={{
             display: "flex",
             flexDirection: "column",
             justifyContent: "center",
-            flexGrow: 1,
+            flex: "1 1 auto", // grow, shrink, auto basis
+            minWidth: 0, // allows shrinking
           }}
         >
           <div className="preview-label" style={{ marginBottom: "0.5rem" }}>
-            convergence
+            Loss -{" "}
+            {config.data.disableAdaptation ? "" : config.data.updateStrategy}
           </div>
           <div style={{ flex: "1 1 auto" }}>
             <ProgressGraph
@@ -195,14 +213,35 @@ export const App = () => {
         </div>
       </div>
 
-      <div className="main-container" ref={mainContainerRef}>
+      <div
+        className="main-container"
+        ref={mainContainerRef}
+        onClick={() => !isFullscreen && setIsFullscreen(true)}
+      >
         <span className="main-label">{canvasContent.primary}</span>
-        <div className="canvas-wrapper">
+        <div
+          className={`canvas-wrapper ${isFullscreen ? "fullscreen-overlay" : ""}`}
+        >
+          {isFullscreen && (
+            <div className="fullscreen-header">
+              <button
+                onClick={() => setIsFullscreen(false)}
+                aria-label="Close fullscreen view"
+              >
+                ×
+              </button>
+            </div>
+          )}
           <canvas
             id="primaryCanvas"
             width={gridSize}
             height={gridSize}
-            className="primary-canvas"
+            className={`primary-canvas ${isFullscreen ? "fullscreen-canvas" : ""}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              !isFullscreen && setIsFullscreen(true);
+            }}
+            style={{ cursor: isFullscreen ? "default" : "pointer" }}
           />
         </div>
         <canvas
