@@ -5,6 +5,7 @@ import {
   getSimulationShaderSource,
   displayShaderSource,
 } from "./shaders.js";
+import { polar } from "./util.js";
 
 const DisplayMode = {
   FUNDAMENTAL: 0,
@@ -175,6 +176,17 @@ export class RenderSystem {
       "u_previous",
       "u_lens",
       "u_fundamental",
+      "u_shg",
+      "u_lambdaFund",
+      "u_lambdaSHG",
+      "u_temperature",
+      "u_phaseRef",
+      "u_gainMask",
+      "u_gain0",
+      "u_gainSat",
+      "u_linearLoss",
+      "u_crossKerrCoupling",
+      "u_conversionCoupling",
     ];
     this.mainGL.useProgram(this.programs.simulation);
     simUniforms.forEach((name) => {
@@ -317,6 +329,12 @@ export class RenderSystem {
       this.config.gridSize,
     );
 
+    this.gainMaskTex = webgl.createTexture(
+      this.mainGL,
+      this.config.gridSize,
+      this.config.gridSize,
+    );
+
     // Display textures for previews
     // We'll allocate them once and reuse them by calling texSubImage2D each frame
     this.preview1Texture = webgl.createTexture(
@@ -387,6 +405,16 @@ export class RenderSystem {
         const phase = 2.0 * Math.PI * prng();
         fundamentalData[idx] = amp * Math.cos(phase);
         fundamentalData[idx + 1] = amp * Math.sin(phase);
+      }
+    }
+
+    for (let y = 0; y < this.config.gridSize; y++) {
+      for (let x = 0; x < this.config.gridSize; x++) {
+        const idx = (y * this.config.gridSize + x) * 4;
+        const amp = sigma * this.gaussianRandom(prng);
+        const phase = 2.0 * Math.PI * prng();
+        zeroData[idx] = amp * Math.cos(phase);
+        zeroData[idx + 1] = amp * Math.sin(phase);
       }
     }
 
@@ -473,6 +501,82 @@ export class RenderSystem {
         zeroData,
       );
     });
+
+    const gainMaskData = this.createGainMaskData(this.config);
+
+    const rgbaData = new Float32Array(
+      this.config.gridSize * this.config.gridSize * 4,
+    );
+    for (let i = 0; i < gainMaskData.length; i++) {
+      rgbaData[i * 4] = gainMaskData[i]; // R channel
+      rgbaData[i * 4 + 1] = 0; // G channel
+      rgbaData[i * 4 + 2] = 0; // B channel
+      rgbaData[i * 4 + 3] = 1; // A channel
+    }
+
+    this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, this.gainMaskTex);
+    this.mainGL.texImage2D(
+      this.mainGL.TEXTURE_2D,
+      0,
+      this.mainGL.RGBA32F,
+      this.config.gridSize,
+      this.config.gridSize,
+      0,
+      this.mainGL.RGBA,
+      this.mainGL.FLOAT,
+      rgbaData,
+    );
+  }
+
+  createGainMaskData(config) {
+    const gridSize = config.gridSize;
+    const gainMaskData = new Float32Array(gridSize * gridSize);
+    const centerX = Math.floor(gridSize / 2);
+    const centerY = Math.floor(gridSize / 2);
+
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < gridSize; x++) {
+        const coords = polar.getZoneAndSector(
+          x,
+          y,
+          centerX,
+          centerY,
+          config.lensRadius,
+          config.fresnelZones,
+          config.numSectors,
+        );
+
+        if (coords) {
+          // Inside the lens disk - we have several options for gain patterning:
+
+          // Option 1: Uniform gain across entire lens disk
+          // gainMaskData[y * gridSize + x] = 1.0;
+
+          // Option 2: Alternating zones (uncomment to use)
+          // gainMaskData[y * gridSize + x] = coords.zone % 2 ? 1.0 : 0.0;
+
+          // Option 3: Radial gradient (stronger at center)
+          const normalizedRadius = coords.zone / config.fresnelZones;
+          gainMaskData[y * gridSize + x] = 1.0 - normalizedRadius;
+
+          // Option 4: Sectoral pattern (uncomment to use)
+          // gainMaskData[y * gridSize + x] = coords.sector % 2 ? 1.0 : 0.0;
+
+          // Option 5: Checkerboard of zones and sectors (uncomment to use)
+          // gainMaskData[y * gridSize + x] =
+          //   (coords.zone + coords.sector) % 2 ? 1.0 : 0.0;
+
+          // Option 7: Central hot spot with sharp falloff
+          // const normalizedRadius = coords.zone / config.fresnelZones;
+          // gainMaskData[y * gridSize + x] = normalizedRadius < 0.2 ? 3.0 : 0.0;
+        } else {
+          // Outside the lens disk - no gain
+          gainMaskData[y * gridSize + x] = 0.0;
+        }
+      }
+    }
+
+    return gainMaskData;
   }
 
   readFieldData(texture) {
@@ -631,6 +735,8 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_shg_Isat, this.config.shg_Isat);
     gl.uniform1f(uniforms.u_kerr_Isat, this.config.kerr_Isat);
     gl.uniform1f(uniforms.u_chi, this.config.chi);
+
+    // Resolution, boundary params
     gl.uniform2f(
       uniforms.u_resolution,
       this.config.gridSize,
@@ -639,11 +745,30 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_boundaryR0, this.config.boundaryR0);
     gl.uniform1f(uniforms.u_boundaryAlpha, this.config.boundaryAlpha);
     gl.uniform1f(uniforms.u_boundaryM, this.config.boundaryM);
+
+    // Timekeeping / update settings
     gl.uniform1i(uniforms.u_updateTarget, updateTarget);
     gl.uniform1i(uniforms.u_pulseInterval, this.config.pulseInterval);
     gl.uniform1i(uniforms.u_frameCount, this.frameCount + 1);
 
-    // current/previous textures
+    // New uniforms for cross-Kerr or additional modeling
+    gl.uniform1f(uniforms.u_lambdaFund, this.config.lambdaFund || 40.0);
+    gl.uniform1f(uniforms.u_lambdaSHG, this.config.lambdaSHG || 20.0);
+    gl.uniform1f(uniforms.u_temperature, this.config.temperature || 22.0);
+    gl.uniform1f(uniforms.u_phaseRef, this.config.phaseRef || 0.0);
+    gl.uniform1f(uniforms.u_gain0, this.config.gain0 || 1.0);
+    gl.uniform1f(uniforms.u_gainSat, this.config.gainSat || 1.0);
+    gl.uniform1f(uniforms.u_linearLoss, this.config.linearLoss || 0.0);
+    gl.uniform1f(
+      uniforms.u_crossKerrCoupling,
+      this.config.crossKerrCoupling || 0.0,
+    );
+    gl.uniform1f(
+      uniforms.u_conversionCoupling,
+      this.config.conversionCoupling || 0.0,
+    );
+
+    // Bind relevant textures
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(
       gl.TEXTURE_2D,
@@ -667,12 +792,21 @@ export class RenderSystem {
     gl.bindTexture(gl.TEXTURE_2D, this.lensTexture);
     gl.uniform1i(uniforms.u_lens, 2);
 
-    // Fundamental for SHG updates
     if (updateTarget === 1) {
+      // For SHG update, bind fundamental as input
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, this.fundamentalTextures[this.next]);
       gl.uniform1i(uniforms.u_fundamental, 3);
+    } else {
+      // For fundamental update, bind SHG as input
+      gl.activeTexture(gl.TEXTURE3);
+      gl.bindTexture(gl.TEXTURE_2D, this.shgTextures[this.next]);
+      gl.uniform1i(uniforms.u_shg, 3);
     }
+
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.gainMaskTex);
+    gl.uniform1i(uniforms.u_gainMask, 4);
   }
 
   renderPrimary() {

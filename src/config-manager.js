@@ -5,36 +5,55 @@ export const constants = {
 
 // Default configuration values
 const defaultConfigData = {
-  dt: 0.2,
+  // Core simulation parameters
+  dt: 0.1,
   dx: 1,
   gridSize: constants.GRID_SIZE,
   damping: 1,
   c: 1,
-  use9PointStencil: true,
-  chi: 0.9, // Even stronger nonlinearity
-  chi_ratio: -8, // Increased χ(3) effect
-  shg_Isat: 0.06, // Lower saturation threshold
-  kerr_Isat: 0.08, // Lower Kerr saturation
-  boundaryAlpha: 0.1,
-  boundaryM: 8, // Reduced for cleaner geometric patterns
-  margin: 0,
-  boundaryReflectivity: "1.",
-  lensRadius: 64, // Larger interaction region
-  fresnelZones: 12, // More radial resolution
-  numSectors: 84, // Even finer angular resolution
-  hillPower: 2,
-  updateStrategy: "solitonStrategy",
-  learningRate: 1e-5,
-  optimizationInterval: 1,
-  pulseInterval: 200,
-  initialPulseAmplitude: 24,
-  initialPulsePhaseShift: 0.0,
-  initialNoiseScale: 0,
-  initialBeamWidth: 3,
-  useSimplePulse: false,
-  disableAdaptation: false,
-};
+  use9PointStencil: false,
 
+  // Nonlinear parameters
+  chi: 0.2,
+  chi_ratio: -40,
+  shg_Isat: 0.08,
+  kerr_Isat: 0.08,
+
+  crossKerrCoupling: 0.004,
+  conversionCoupling: 0.0008,
+
+  gain0: 4.0,
+  gainSat: 0.1,
+  linearLoss: 0.2,
+
+  // Phase-matching
+  lambdaFund: 100.0,
+  lambdaSHG: 10.0, // 10:1 ratio
+  temperature: 22.0,
+  phaseRef: Math.PI * 1.5,
+
+  // Standard boundary and geometry
+  boundaryAlpha: 0.2,
+  boundaryM: 8,
+  margin: 10,
+  boundaryReflectivity: "1",
+  lensRadius: 32,
+  fresnelZones: 12,
+  numSectors: 84,
+
+  updateStrategy: "original2",
+  learningRate: 1e-6,
+  optimizationInterval: 1,
+  disableAdaptation: true,
+
+  // Initial conditions
+  pulseInterval: 0,
+  initialPulseAmplitude: 86,
+  initialPulsePhaseShift: 0.0,
+  useSimplePulse: false,
+  initialNoiseScale: 0,
+  initialBeamWidth: 4,
+};
 export const referenceConfig = {
   data: defaultConfigData,
   metadata: {

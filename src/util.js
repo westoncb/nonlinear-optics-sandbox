@@ -111,17 +111,20 @@ export const polar = {
     const dy = y - centerY;
     const r = Math.sqrt(dx * dx + dy * dy);
 
-    if (r > radius) return null;
+    if (r > radius) {
+      return null; // This early return is correct
+    } else {
+      const zoneIndex = Math.floor((r / radius) * numZones);
+      let theta = Math.atan2(dy, dx);
+      let sectorIndex =
+        Math.floor((theta + Math.PI) / ((2 * Math.PI) / numSectors)) %
+        numSectors;
 
-    const zoneIndex = Math.floor((r / radius) * numZones);
-    let theta = Math.atan2(dy, dx);
-    let sectorIndex =
-      Math.floor((theta + Math.PI) / ((2 * Math.PI) / numSectors)) % numSectors;
-
-    return {
-      zone: Math.min(numZones - 1, Math.max(0, zoneIndex)),
-      sector: sectorIndex,
-    };
+      return {
+        zone: Math.min(numZones - 1, Math.max(0, zoneIndex)),
+        sector: sectorIndex,
+      };
+    }
   },
 };
 
