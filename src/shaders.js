@@ -22,41 +22,81 @@ export const getSimulationShaderSource = (config) => {
   uniform sampler2D u_fundamental;
   uniform sampler2D u_shg;
 
-  // NEW: Additional uniforms for saturable gain
+  // Saturable gain
   uniform sampler2D u_gainMask;
   uniform float u_gain0;
   uniform float u_gainSat;
   uniform float u_linearLoss;
 
-  // OPTIONAL: A mask for “neurons” that amplifies Kerr effects locally
-  // uniform sampler2D u_neuronMask;
-
   // Grid, time, boundary
   uniform float u_dt;
   uniform float u_dx;
   uniform float u_damping;
-  uniform float u_c;
-  uniform float u_chi;
+  uniform float u_c;            // baseline speed in vacuum or reference medium
+
+  uniform float u_chi;          // global scaling for chi(2) and chi(3)
   uniform float u_chi_ratio;
+  uniform float u_chi2_ratio;
   uniform float u_shg_Isat;
   uniform float u_kerr_Isat;
+  uniform float u_crossKerrCoupling;
+  uniform float u_conversionCoupling;
+
   uniform vec2  u_resolution;
   uniform float u_boundaryR0;
   uniform float u_boundaryAlpha;
   uniform float u_boundaryM;
+  uniform float u_boundaryReflectivity;
   uniform int   u_updateTarget;
   uniform int   u_frameCount;
   uniform int   u_pulseInterval;
 
-  // Phase matching & additional
+  // Phase matching
   uniform float u_lambdaFund;
   uniform float u_lambdaSHG;
   uniform float u_temperature;
   uniform float u_phaseRef;
-  uniform float u_crossKerrCoupling;
-  uniform float u_conversionCoupling;
 
   const float PI = 3.14159265358979323846;
+
+  out vec4 fragColor;
+
+  /*----------------------------------------------------------
+    2) Helpers
+  ----------------------------------------------------------*/
+  float wrappedPhaseDelta(float phase1, float phase2) {
+      float diff = phase1 - phase2;
+      // shift diff to (-π, π)
+      diff = mod(diff + PI, 2.0 * PI) - PI;
+      return diff;
+  }
+
+  /*
+    Approximate partial derivatives in phase with simple wrap.
+  */
+  vec2 calculatePhaseGradients(vec2 pos, vec2 texel, vec4 center) {
+      // Need 2 points on each side
+      vec4 far_left   = texture(u_current, (pos + vec2(-2.0,  0.0)) * texel);
+      vec4 left       = texture(u_current, (pos + vec2(-1.0,  0.0)) * texel);
+      vec4 right      = texture(u_current, (pos + vec2( 1.0,  0.0)) * texel);
+      vec4 far_right  = texture(u_current, (pos + vec2( 2.0,  0.0)) * texel);
+
+      vec4 far_down   = texture(u_current, (pos + vec2( 0.0,  2.0)) * texel);
+      vec4 down       = texture(u_current, (pos + vec2( 0.0,  1.0)) * texel);
+      vec4 up         = texture(u_current, (pos + vec2( 0.0, -1.0)) * texel);
+      vec4 far_up     = texture(u_current, (pos + vec2( 0.0, -2.0)) * texel);
+
+      // 4th order coefficients: (-1/12, 8/12, -8/12, 1/12)
+      float dphase_dx =
+          (-wrappedPhaseDelta(atan(far_right.y, far_right.x), atan(far_left.y, far_left.x)) / 12.0 +
+            wrappedPhaseDelta(atan(right.y, right.x), atan(left.y, left.x)) * (8.0/12.0)) / (u_dx);
+
+      float dphase_dy =
+          (-wrappedPhaseDelta(atan(far_down.y, far_down.x), atan(far_up.y, far_up.x)) / 12.0 +
+            wrappedPhaseDelta(atan(down.y, down.x), atan(up.y, up.x)) * (8.0/12.0)) / (u_dx);
+
+      return vec2(dphase_dx, dphase_dy);
+  }
 
   /*----------------------------------------------------------
     1) Boundary logic
@@ -70,163 +110,86 @@ export const getSimulationShaderSource = (config) => {
       return (r <= radius);
   }
 
-  /*
-     Optionally, you may wish to implement a “soft” boundary or an absorbing
-     layer. The below function returns reflectivity=1.0 for perfect reflection,
-     but you could do something like:
+  // A helper to do a simpler TE Fresnel reflectivity:
+  float fresnelReflectivity_TE(float n_in, float n_out, float theta_i) {
+      // Snell's law: n_in * sin(theta_i) = n_out * sin(theta_t)
+      float sin_t = (n_in / n_out) * sin(theta_i);
+      // clamp to avoid domain errors
+      sin_t = clamp(sin_t, -1.0, 1.0);
 
-         float reflectivity = 1.0 - smoothstep(R0, R1, r);
+      float theta_t = asin(sin_t);
 
-     if you want a tapered absorbing zone between [R0, R1].
-  */
-  /* Example uniform parameters:
-     - u_useSoftBoundary: bool - enable the smooth radial fade
-     - u_absorbRadiusInner, u_absorbRadiusOuter: float - radial region in which reflectivity goes from near 1.0 to near 0.0
-     - u_usePositionDependentReflect: bool - enable an angular or radial reflectivity variation
-     - u_reflectBase: float - baseline reflectivity
-     - u_reflectAmplitude: float - amplitude of reflectivity modulation
-     - u_reflectFreq: float - frequency (e.g. how many cycles around the boundary)
-     - u_enableHardClipAtOuterBoundary: bool - if “true,” anything beyond outer boundary is forced to 0 reflectivity
-  */
+      // TE reflectivity: R_TE = |(n_in cos(theta_i) - n_out cos(theta_t)) /
+      //                          (n_in cos(theta_i) + n_out cos(theta_t))|^2
+      float cos_i = cos(theta_i);
+      float cos_t = cos(theta_t);
 
-  uniform bool  u_useSoftBoundary;
-  uniform float u_absorbRadiusInner;
-  uniform float u_absorbRadiusOuter;
-
-  uniform bool  u_usePositionDependentReflect;
-  uniform float u_reflectBase;
-  uniform float u_reflectAmplitude;
-  uniform float u_reflectFreq;
-
-  uniform bool  u_enableHardClipAtOuterBoundary;
-
-  float getBoundaryReflectivity(vec2 pos)
-  {
-      // Define default values for the variables
-      float u_useSoftBoundary = 1.0;       // 1.0 = true, 0.0 = false
-      float u_absorbRadiusInner = 100.0;  // Inner radius for absorbing layer
-      float u_absorbRadiusOuter = 200.0;  // Outer radius for absorbing layer
-      float u_usePositionDependentReflect = 1.0; // 1.0 = true, 0.0 = false
-      float u_reflectBase = 0.5;          // Base reflectivity
-      float u_reflectAmplitude = 0.5;     // Amplitude of position-dependent reflectivity
-      float u_reflectFreq = 6.28;         // Frequency for position-dependent reflectivity (e.g., radians)
-      float u_enableHardClipAtOuterBoundary = 1.0; // 1.0 = true, 0.0 = false
-
-      // 1) Basic radial distance from center
-      vec2 center = 0.5 * u_resolution;
-      float r     = length(pos - center);
-
-      // 2) Start with a default reflectivity of 1.0
-      float reflectVal = 1.0;
-
-      // 3) If we want a soft boundary (absorbing layer),
-      //    fade out reflectivity from r=in to r=out:
-      if (u_useSoftBoundary > 0.5) {
-          // The factor alpha = 0 in [0, absorbRadiusInner],
-          // alpha=1 in [absorbRadiusOuter, ∞].
-          // reflectVal = 1 at alpha=0, 0 at alpha=1.
-          float alpha = clamp(
-              (r - u_absorbRadiusInner) / (u_absorbRadiusOuter - u_absorbRadiusInner),
-              0.0, 1.0
-          );
-          float fade = 1.0 - alpha;
-          reflectVal *= fade;
-      }
-
-      // 4) If we want position-dependent reflectivity (angular or radial):
-      //    For example, a sinusoidal function of the angle:
-      if (u_usePositionDependentReflect > 0.5) {
-          float angle = atan(pos.y - center.y, pos.x - center.x);
-          // E.g. reflect pattern = reflectBase + reflectAmplitude * cos(reflectFreq * angle)
-          // Adjust as you see fit, could also be radial-based or a custom function:
-          float pattern = u_reflectBase
-                        + u_reflectAmplitude * cos(u_reflectFreq * angle);
-          // ensure we don’t go negative if amplitude is large
-          pattern = max(0.0, pattern);
-          reflectVal *= pattern;
-      }
-
-      // 5) If we do not want *any* reflection beyond outer boundary
-      //    (e.g. a “hard clip”):
-      if (u_enableHardClipAtOuterBoundary > 0.5
-          && u_useSoftBoundary > 0.5
-          && (r > u_absorbRadiusOuter)) {
-          reflectVal = 0.0;
-      }
-
-      // 6) Return final reflectivity
-      return reflectVal;
+      float r_num = (n_in * cos_i) - (n_out * cos_t);
+      float r_den = (n_in * cos_i) + (n_out * cos_t);
+      float r     = r_num / r_den;
+      return r * r;
   }
 
+  float computeAngleDependentReflectivity(vec2 pos, vec2 texel) {
+      vec2 centerPos = 0.5 * u_resolution;
+      vec2 rel = pos - centerPos;
+      float r = length(rel);
 
-  /*----------------------------------------------------------
-    2) Phase derivative helpers with optional simple unwrap
-  ----------------------------------------------------------*/
-  float safeAtan2(float y, float x) {
-      // Some hardware or older ES profiles can show quirks
-      // on atan(y,x).  Usually fine in modern GLSL though.
-      return atan(y, x);
-  }
+      // boundary normal (outward)
+      vec2 n_vec = normalize(rel);
 
-  /*
-     A naive attempt at local phase unwrapping. We measure
-     the difference, then keep it in (-π, π):
-  */
-  float wrappedPhaseDelta(float phase1, float phase2) {
-      float diff = phase1 - phase2;
-      // shift diff to (-π, π)
-      diff = mod(diff + PI, 2.0 * PI) - PI;
-      return diff;
-  }
+      // get local wavevector from phase gradient
+      vec4 centerVal = texture(u_current, pos * texel);
+      vec2 kvec = calculatePhaseGradients(pos, texel, centerVal);
+      float kLen = length(kvec);
 
-  /* Approximate partial derivatives in phase with simple wrap. */
-  vec2 calculatePhaseGradients(vec2 pos, vec2 texel, vec4 center) {
-      float centerPhase = safeAtan2(center.y, center.x);
+      // if kLen is near zero, wave is near node or uniform phase
+      if (kLen < 1e-6) return 0.0;
 
-      vec4 right = texture(u_current, (pos + vec2( 1.0,  0.0)) * texel);
-      vec4 left  = texture(u_current, (pos + vec2(-1.0,  0.0)) * texel);
-      vec4 up    = texture(u_current, (pos + vec2( 0.0, -1.0)) * texel);
-      vec4 down  = texture(u_current, (pos + vec2( 0.0,  1.0)) * texel);
+      vec2 k_hat = kvec / kLen;
 
-      float phaseR = safeAtan2(right.y, right.x);
-      float phaseL = safeAtan2(left.y,  left.x);
-      float phaseU = safeAtan2(up.y,    up.x);
-      float phaseD = safeAtan2(down.y,  down.x);
+      // angle of incidence = arccos(k_hat dot n_vec)
+      float cos_in = dot(k_hat, n_vec);
+      cos_in = clamp(cos_in, -1.0, 1.0);
+      float theta_i = acos(cos_in);
+      // handle outward-going waves
+      if (theta_i > PI/2.0) {
+          theta_i = PI - theta_i;
+      }
 
-      float dphase_dx = (wrappedPhaseDelta(phaseR, centerPhase)
-                       - wrappedPhaseDelta(phaseL, centerPhase)) / (2.0 * u_dx);
-      float dphase_dy = (wrappedPhaseDelta(phaseD, centerPhase)
-                       - wrappedPhaseDelta(phaseU, centerPhase)) / (2.0 * u_dx);
+      // get local index from lens.x
+      float n_local = max(texture(u_lens, pos * texel).x, 1e-6);
 
-      return vec2(dphase_dx, dphase_dy);
+      // compute TE Fresnel reflectivity
+      float R_TE = fresnelReflectivity_TE(n_local, 1.0, theta_i);
+
+      return R_TE;
   }
 
   /*----------------------------------------------------------
-    3) Laplacian stencils
+    3) 9-point Laplacian (fourth-order accurate)
   ----------------------------------------------------------*/
   vec2 ninePointLaplacian(vec2 pos, vec2 texel, vec4 center) {
+      // Direct neighbors
       vec4 left   = texture(u_current, (pos + vec2(-1.0,  0.0)) * texel);
       vec4 right  = texture(u_current, (pos + vec2( 1.0,  0.0)) * texel);
       vec4 up     = texture(u_current, (pos + vec2( 0.0, -1.0)) * texel);
       vec4 down   = texture(u_current, (pos + vec2( 0.0,  1.0)) * texel);
 
       // Diagonals
-      vec4 upleft    = texture(u_current, (pos + vec2(-1.0, -1.0)) * texel);
-      vec4 upright   = texture(u_current, (pos + vec2( 1.0, -1.0)) * texel);
-      vec4 downleft  = texture(u_current, (pos + vec2(-1.0,  1.0)) * texel);
-      vec4 downright = texture(u_current, (pos + vec2( 1.0,  1.0)) * texel);
+      vec4 ul  = texture(u_current, (pos + vec2(-1.0, -1.0)) * texel);
+      vec4 ur  = texture(u_current, (pos + vec2( 1.0, -1.0)) * texel);
+      vec4 dl  = texture(u_current, (pos + vec2(-1.0,  1.0)) * texel);
+      vec4 dr  = texture(u_current, (pos + vec2( 1.0,  1.0)) * texel);
 
-      // Weighted sum
-      // The factor 2/3 for direct neighbors, 1/6 for diagonals, -4 for center
-      // is one typical approach; you may want 1/(u_dx*u_dx) after summing.
-      vec2 sumDirect    = (left + right + up + down).xy * (2.0 / 3.0);
-      vec2 sumDiagonals = (upleft + upright + downleft + downright).xy * (1.0 / 6.0);
-      vec2 centerTerm   = center.xy * -4.0;
+      // Standard 9-point 4th-order weights:
+      // ∇²f ≈ (1 / (6 h^2)) * [4*(N,S,E,W) + (NE,NW,SE,SW) - 20*fC ]
+      // sum of weights = 0 for constant field.
+      vec2 lap = (4.0 * (left.xy + right.xy + up.xy + down.xy)
+                + (ul.xy + ur.xy + dl.xy + dr.xy)
+                - 20.0 * center.xy) / (6.0 * (u_dx * u_dx));
 
-      // Typically you'd multiply the entire sum by (1.0 / (u_dx*u_dx)) if
-      // you want a physically consistent wave equation. Do that below.
-      vec2 lap = sumDirect + sumDiagonals + centerTerm;
-      return lap / (u_dx * u_dx);
+      return lap;
   }
 
   vec2 fivePointLaplacian(vec2 pos, vec2 texel, vec4 center) {
@@ -240,227 +203,301 @@ export const getSimulationShaderSource = (config) => {
   }
 
   /*----------------------------------------------------------
-    4) Temperature-dependent Sellmeier (same basic logic)
+    4) Refractive index from local geometry
   ----------------------------------------------------------*/
-  float calculateRefractiveIndex(float wavelength, float temperature, bool extraordinary) {
-      float lam_um = wavelength * 1e6;
 
-      // (Fictitious example coefficients)
-      float A_o = 4.9048;
-      float B_o = 0.11768;
-      float C_o = 0.04750;
-      float D_o = 1.5e-5;
-      float T0  = 25.0;
+  float computeAngleDependentBaseIndex(vec2 pos, vec2 texel) {
+      // 1) fetch and validate lens data
+      vec4 lensVal = texture(u_lens, pos * texel);
 
-      float A_e = 4.5820;
-      float B_e = 0.09920;
-      float C_e = 0.04438;
-      float D_e = 2.0e-5;
+      float n_o = max(lensVal.x, 1.0);  // ordinary index shouldn't be less than vacuum
+      float n_e = max(lensVal.y, 1.0);  // extraordinary index shouldn't be less than vacuum
+      float axisAngle = lensVal.z;      // orientation of optic axis at this pixel
 
-      if (!extraordinary) {
-          float n_o_sq = A_o + (B_o / (lam_um * lam_um - C_o)) - D_o*(temperature - T0);
-          return sqrt(n_o_sq);
-      } else {
-          float n_e_sq = A_e + (B_e / (lam_um * lam_um - C_e)) - D_e*(temperature - T0);
-          return sqrt(n_e_sq);
+      // Early exit if indices are effectively equal (isotropic case)
+      if (abs(n_e - n_o) < 1e-6) {
+          return n_o;
       }
+
+      // 2) compute local wave-vector direction using the provided gradient function
+      vec4 cVal = texture(u_current, pos * texel);
+      vec2 gradPhi = calculatePhaseGradients(pos, texel, cVal);
+      float gradLen = length(gradPhi);
+
+      // if gradient is too small, return ordinary index
+      const float MIN_GRAD_LENGTH = 1e-9;
+      if (gradLen < MIN_GRAD_LENGTH) {
+          return n_o;
+      }
+
+      // 3) compute direction of wave vector and angle with optic axis
+      vec2 k_hat = gradPhi / gradLen;
+      vec2 axisDir = vec2(cos(axisAngle), sin(axisAngle));
+      float cosAngle = dot(k_hat, axisDir);
+      cosAngle = clamp(cosAngle, -1.0, 1.0);
+
+      // Optimization: avoid acos/sin calls by working with cosine directly
+      float cosT = cosAngle;
+      float sinT_sq = 1.0 - cosT * cosT;  // sin²(θ) = 1 - cos²(θ)
+
+      // 4) uniaxial formula
+      // n(θ) = (n_o n_e)/sqrt(n_e² cos²(θ) + n_o² sin²(θ))
+      float denom = n_e * n_e * cosT * cosT + n_o * n_o * sinT_sq;
+      denom = max(denom, 1e-12);  // Prevent division by zero
+
+      return (n_o * n_e) / sqrt(denom);
+  }
+
+  float getWavelengthDependentIndex(float baseIndex, float dispersion, float wavelength) {
+      // Simple dispersion model: n(λ) = n_base + dispersion * (1/λ² - 1/λ_ref²)
+      float lambda_ref = u_lambdaFund;
+      return baseIndex + dispersion * (1.0/(wavelength*wavelength) - 1.0/(lambda_ref*lambda_ref));
   }
 
   /*----------------------------------------------------------
-    5) Angle-dependent index
-  ----------------------------------------------------------*/
-  float calculateAngleDependentIndex(float theta, float ne, float no) {
-      float ne2  = ne * ne;
-      float no2  = no * no;
-      float c2   = cos(theta); c2 *= c2;
-      float s2   = sin(theta); s2 *= s2;
-      return sqrt((ne2 * no2) / (ne2 * c2 + no2 * s2));
-  }
-
-  /*----------------------------------------------------------
-    6) Phase mismatch term
+    5) Phase mismatch
   ----------------------------------------------------------*/
   vec4 calculatePhaseMismatchTerm(vec2 pos, vec2 texel, vec4 center) {
-      float amp2 = dot(center.xy, center.xy);
+      // 1. First get angle-dependent base indices
+      float n_base_fund = computeAngleDependentBaseIndex(pos, texel);
+      vec4 shgVal = texture(u_shg, pos * texel);
+      float n_base_shg = computeAngleDependentBaseIndex(pos, texel);
 
-      // For demonstration, use ordinary index for both:
-      float nFund = calculateRefractiveIndex(u_lambdaFund, u_temperature, false);
-      float nSHG  = calculateRefractiveIndex(u_lambdaSHG, u_temperature, false);
+      // 2. Get dispersion coefficient from lens texture
+      vec4 lensVal = texture(u_lens, pos * texel);
+      float dispersionCoeff = lensVal.y;
 
-      float kFund = 2.0 * PI * nFund / u_lambdaFund;
-      float kSHG  = 2.0 * PI * nSHG  / u_lambdaSHG;
+      // 3. Combine angle and wavelength dependence
+      float n_fund = getWavelengthDependentIndex(n_base_fund, dispersionCoeff, u_lambdaFund);
+      float n_shg = getWavelengthDependentIndex(n_base_shg, dispersionCoeff, u_lambdaSHG);
 
+      // 4. Calculate k-vectors and phase mismatch as before
+      float kFund = 2.0 * PI * n_fund / u_lambdaFund;
+      float kSHG = 2.0 * PI * n_shg / u_lambdaSHG;
       float deltaK = 2.0 * kFund - kSHG;
 
-      // Incorporate a mild position dependence along y
-      float phase    = deltaK * (pos.y * u_dx) + u_phaseRef;
-      vec2 mismatch  = vec2(cos(phase), sin(phase));
-
-      return vec4(mismatch, 0.0, 0.0);
+      float phase = deltaK * (pos.y * u_dx) + u_phaseRef;
+      return vec4(cos(phase), sin(phase), 0.0, 0.0);
   }
 
   /*----------------------------------------------------------
-    7) Main update
+    6) Local wave speed, dispersion
   ----------------------------------------------------------*/
-  out vec4 fragColor;
+  // We'll interpret lens.x as the local base index n_base.
+  float computeLocalSpeed(float n_local) {
+      // Avoid division by zero
+      n_local = max(n_local, 1e-6);
+      // wave speed in this region
+      return u_c / n_local;
+  }
 
+  // A simplistic approach to "dispersion" as a second time derivative adjustment
+  vec2 applyDispersion(
+      vec2 centerField, vec2 oldField,
+      float dispersionCoeff, float dt
+  ) {
+      // Very ad-hoc: new += dispCoeff*(E(t)-2E(t-dt)) * dt^2
+      vec2 secondTimeDerivativeApprox = centerField - 2.0 * oldField;
+      return dispersionCoeff * secondTimeDerivativeApprox * (dt * dt);
+  }
+
+  // =======================================
+  // Main
+  // =======================================
   void main() {
       vec2 pos   = gl_FragCoord.xy;
       vec2 texel = 1.0 / u_resolution;
 
-      // Boundary condition check
+      // -----------------------------------
+      // 1) Boundary logic with angle-dependent reflection
+      // -----------------------------------
       if (!insideBoundary(pos)) {
+          // If outside boundary, reflect wave with angle-dependent Fresnel logic
           vec4 current = texture(u_current, pos * texel);
-          float boundaryReflectivity = getBoundaryReflectivity(pos);
 
-          // Scale amplitude by reflectivity (and optionally invert normal comp).
+          // For a real mirrored cavity boundary:
+          float boundaryReflectivity = computeAngleDependentReflectivity(pos, texel);
+
+          // Multiply field by reflection coefficient
           vec2 reflectedField = current.xy * boundaryReflectivity;
 
-          // Could do e.g. “absorbing boundary” if we want:
-          // reflectedField *= 0.95;  // damp a bit each frame
-          // Or more advanced absorbing layers.
-
-          fragColor = vec4(reflectedField, 0.0, 1.0);
+          // Typically we won't compute localPhaseMatch or totalNon outside
+          // the boundary, so set them to zero (or some sentinel).
+          fragColor = vec4(reflectedField, 0.0, 0.0);
           return;
       }
 
-      // Fetch fields at center
+      // -----------------------------------
+      // 2) Fetch fields
+      // -----------------------------------
       vec4 center   = texture(u_current, pos * texel);
       vec4 oldField = texture(u_previous, pos * texel);
-      vec4 lens     = texture(u_lens, pos * texel);
+      vec4 lensVal  = texture(u_lens, pos * texel);
 
-      // Select which Laplacian to use
-      vec2 laplacianRaw = ${
-        config.use9PointStencil ? "nine" : "five"
-      }PointLaplacian(pos, texel, center);
+      // For convenience
+      float amp2 = dot(center.xy, center.xy);
 
-      // “Lens” or local wavefront factor:
-      // multiply (laplacianRaw.x + i laplacianRaw.y) by (lens.x + i lens.y)
-      vec2 lensedLaplacian = vec2(
-          laplacianRaw.x * lens.x - laplacianRaw.y * lens.y,
-          laplacianRaw.x * lens.y + laplacianRaw.y * lens.x
-      );
+      // -----------------------------------
+      // 3) Angle-dependent base index
+      // -----------------------------------
+      float n_baseAngle = computeAngleDependentBaseIndex(pos, texel);
 
-      // === Saturable gain calculation ===
-      float amp2        = dot(center.xy, center.xy);
-      float localGain   = u_gain0 / (1.0 + amp2 / u_gainSat) - u_linearLoss;
+      // -----------------------------------
+      // 4) Kerr shift
+      //     n_kerr = chi3_local * amp^2 / (1 + amp^2/I_sat)
+      // -----------------------------------
+      float chi3_local = u_chi * u_chi * u_chi_ratio * lensVal.w;  // lensVal.w used for local chi(3)
+      float kerrSatFactor  = 1.0 / (1.0 + amp2 / u_kerr_Isat);
+      float n_kerr         = chi3_local * amp2 * kerrSatFactor;
+
+
+      // -----------------------------------
+      // 5) Combine into total index => local speed
+      // -----------------------------------
+      // We'll add cross-Kerr separately. Here is just the base + self-Kerr:
+      float n_eff = n_baseAngle + n_kerr;
+      n_eff = max(n_eff, 1e-6);  // clamp to avoid div by zero
+
+      float c_local = u_c / n_eff;
+      float c2_local = c_local * c_local;
+
+      float dispersionCoeff = lensVal.y;
+
+      // -----------------------------------
+      // 6) Saturable gain
+      // localGain = gain0/(1+amp2/gainSat) - linearLoss
+      // -----------------------------------
+      float localGain = u_gain0 / (1.0 + amp2 / u_gainSat) - u_linearLoss;
       float gainMaskVal = texture(u_gainMask, pos * texel).r;
-      localGain        *= gainMaskVal;  // zero or scaled outside pump region
+      localGain *= gainMaskVal;
 
-      // === OPTIONAL “neuron” factor for localized Kerr amplification ===
-      // float neuronMaskVal = texture(u_neuronMask, pos * texel).r;
-      // float neuronFactor   = 1.0 + 2.0 * neuronMaskVal;
-      float neuronFactor = 1.0;  // just identity if not used
+      // We'll store placeholders for localPhaseMatch & totalNon for final output.
+      float localPhaseMatch = 0.0;
+      float totalNon        = 0.0;
 
-      /*------------------------------------------------------------------
-        Fundamental vs. SHG update branches
-      ------------------------------------------------------------------*/
+      // -----------------------------------
+      // 7) Switch: Fundamental or SHG update
+      // -----------------------------------
       if (u_updateTarget == 0) {
-          // -------------- Fundamental --------------
-          vec4 shg       = texture(u_shg, pos * texel);
+          // === Fundamental update ===
+          vec4 shg = texture(u_shg, pos * texel);
           float shg_amp2 = dot(shg.xy, shg.xy);
+          float fund_amp2 = amp2;
 
-          // Basic Kerr
-          float kerrSat  = 1.0 / (1.0 + amp2 / u_kerr_Isat);
-          float n2_eff   = u_chi * u_chi * u_chi_ratio;
-          float kerrSelf = n2_eff * amp2 * kerrSat;
-          float kerrCross= u_crossKerrCoupling * n2_eff * shg_amp2 * kerrSat;
-          float totalNon = (kerrSelf + kerrCross) * neuronFactor; // “nonlinearity”
+          // Base refractive index
+          float n_baseAngle = computeAngleDependentBaseIndex(pos, texel);
+          float n_fund = getWavelengthDependentIndex(n_baseAngle, dispersionCoeff, u_lambdaFund);
 
-          // Effective speed
-          float c2_local = u_c * u_c * (1.0 + totalNon);
+          // Kerr effects
+          float chi3_local = u_chi * u_chi * u_chi_ratio * lensVal.w;
+          float fundKerrSatFactor = 1.0 / (1.0 + fund_amp2 / u_kerr_Isat);
+          float kerrSelf = chi3_local * fund_amp2 * fundKerrSatFactor;
+          float kerrCross = u_crossKerrCoupling * chi3_local * shg_amp2 * fundKerrSatFactor;
+          totalNon = kerrSelf + kerrCross;
 
-          // SHG backreaction
-          vec4 mismatchTerm   = calculatePhaseMismatchTerm(pos, texel, center);
-          float shgAmp2_satur = shg_amp2;
-          vec2 backReaction   = -u_conversionCoupling * u_chi * shgAmp2_satur
-                                * mismatchTerm.xy;
+          // Total effective index and speed
+          float n_eff_f = n_fund + totalNon;
+          n_eff_f = max(n_eff_f, 1e-6);
+          float c_eff_f = u_c / n_eff_f;
+          float c2_eff_f = c_eff_f * c_eff_f;
+          c2_eff_f = min(c2_eff_f, 1.);
 
-          // Wave equation update (leapfrog)
+          // Phase mismatch and conversion
+          vec4 mismatchTerm = calculatePhaseMismatchTerm(pos, texel, center);
+          float chi2_local = u_chi * u_chi2_ratio * lensVal.z;  // lensVal.z used for local chi(2)
+
+          // Fundamental branch - should lose twice the energy it contributes to SHG
+          vec2 upConversion = -2.0 * u_conversionCoupling * chi2_local * fund_amp2
+                            * (1.0 / (1.0 + fund_amp2 / u_shg_Isat))
+                            * mismatchTerm.xy;
+          vec2 downConversion = u_conversionCoupling * chi2_local * shg_amp2
+                             * mismatchTerm.xy;
+
+          // Phase matching measure using both up/down conversion
+          float upMatch = dot(mismatchTerm.xy, upConversion)
+                       / (length(mismatchTerm.xy) * length(upConversion) + 1e-10);
+          float downMatch = dot(mismatchTerm.xy, downConversion)
+                         / (length(mismatchTerm.xy) * length(downConversion) + 1e-10);
+          localPhaseMatch = sign(upMatch) * sqrt(abs(upMatch * downMatch));
+
+          // Standard leapfrog
+          vec2 lap = ${config.use9PointStencil ? "nine" : "five"}PointLaplacian(pos, texel, center);
           vec2 newField = (2.0 * center.xy - oldField.xy)
-                        + c2_local * u_dt * u_dt * lensedLaplacian
-                        + u_dt * u_dt * backReaction
+                        + c2_eff_f * (u_dt * u_dt) * lap
+                        + u_dt * u_dt * downConversion
                         + u_dt * u_dt * localGain * center.xy;
-          newField *= u_damping;
 
-          // Add pulsed injection
+          // dispersion
+          newField += applyDispersion(center.xy, oldField.xy, dispersionCoeff, u_dt);
+
+          // Optional pulsed injection
           if (u_pulseInterval > 0 && (u_frameCount % u_pulseInterval == 0)) {
               float w0 = 4.0;
               vec2 centerGrid = 0.5 * u_resolution;
               vec2 rel = pos - centerGrid;
               float r2 = dot(rel, rel);
-
-              // amplitude ~ Gaussian
               float amplitude = 0.01 * exp(-r2/(w0*w0));
-              float phase     = 0.0; // could modulate phase if desired
-
+              float phase = 0.0;
               vec2 pulseField = amplitude * vec2(cos(phase), sin(phase));
-              // lens it
-              vec2 lensedPulse = vec2(
-                  pulseField.x * lens.x - pulseField.y * lens.y,
-                  pulseField.x * lens.y + pulseField.y * lens.x
-              );
-              newField += lensedPulse;
+              newField += pulseField;
           }
 
-          // Phase gradient measure
-          vec2 phaseGrad = calculatePhaseGradients(pos, texel, center);
-
-          // Final color
-          fragColor = vec4(newField,
-                           length(phaseGrad),
-                           totalNon);
+          newField *= u_damping;
+          fragColor = vec4(newField, localPhaseMatch, totalNon);
 
       } else {
-          // -------------- SHG --------------
-          float shg_amp2 = dot(center.xy, center.xy);
-
-          float kerrSat     = 1.0 / (1.0 + shg_amp2 / u_kerr_Isat);
-          float n2_eff      = u_chi * u_chi * u_chi_ratio;
-          float kerrSelf    = n2_eff * shg_amp2 * kerrSat;
-
-          // Cross-Kerr from fundamental
-          vec4 fund       = texture(u_fundamental, pos * texel);
+          // === SHG update ===
+          vec4 fund = texture(u_fundamental, pos * texel);
           float fund_amp2 = dot(fund.xy, fund.xy);
-          float kerrCross = u_crossKerrCoupling * n2_eff * fund_amp2 * kerrSat;
+          float shg_amp2 = amp2;
 
-          float totalNon  = (kerrSelf + kerrCross) /* * neuronMaskVal, if used */;
-          float c2_local  = u_c * u_c * (1.0 + totalNon);
+          // Base refractive index combining angle
+          float n_baseAngle = computeAngleDependentBaseIndex(pos, texel);
+          float n_shg = getWavelengthDependentIndex(n_baseAngle, dispersionCoeff, u_lambdaSHG);
 
-          // SHG saturation vs. fundamental amplitude
-          float shgSaturFactor = 1.0 / (1.0 + fund_amp2 / u_shg_Isat);
+          // Kerr effects
+          float chi3_local = u_chi * u_chi * u_chi_ratio * lensVal.w;
+          float shgKerrSatFactor = 1.0 / (1.0 + shg_amp2 / u_kerr_Isat);
+          float kerrSelf = chi3_local * shg_amp2 * shgKerrSatFactor;
+          float kerrCross = u_crossKerrCoupling * chi3_local * fund_amp2 * shgKerrSatFactor;
+          totalNon = kerrSelf + kerrCross;
 
-          // Mismatch
+          // Total effective index and speed
+          float n_eff_shg = n_shg + totalNon;
+          n_eff_shg = max(n_eff_shg, 1e-6);
+          float c_eff_shg = u_c / n_eff_shg;
+          float c2_eff_shg = c_eff_shg * c_eff_shg;
+          c2_eff_shg = min(c2_eff_shg, 1.);
+
+          // Phase mismatch and conversion
           vec4 mismatchTerm = calculatePhaseMismatchTerm(pos, texel, center);
+          float chi2_local = u_chi * lensVal.z;  // lensVal.z used for local chi(2)
 
-          // Forward SHG gen
-          vec2 sourceTerm = u_conversionCoupling * u_chi * fund_amp2
-                          * shgSaturFactor * mismatchTerm.xy;
+          // SHG branch - gets one photon for every two fundamental photons
+          vec2 upConversion = u_conversionCoupling * chi2_local * fund_amp2
+                            * (1.0 / (1.0 + fund_amp2 / u_shg_Isat))
+                            * mismatchTerm.xy;
+          vec2 downConversion = -u_conversionCoupling * chi2_local * shg_amp2
+                             * mismatchTerm.xy;
 
-          // Back-conversion
-          vec2 backConversionTerm = -u_conversionCoupling * u_chi
-                                    * shg_amp2 * mismatchTerm.xy;
+          // Phase matching measure using both up/down conversion
+          float upMatch = dot(mismatchTerm.xy, upConversion)
+                       / (length(mismatchTerm.xy) * length(upConversion) + 1e-10);
+          float downMatch = dot(mismatchTerm.xy, downConversion)
+                         / (length(mismatchTerm.xy) * length(downConversion) + 1e-10);
+          localPhaseMatch = sign(upMatch) * sqrt(abs(upMatch * downMatch));
 
-          // Wave eq
+          // Standard leapfrog
+          vec2 lap = ${config.use9PointStencil ? "nine" : "five"}PointLaplacian(pos, texel, center);
           vec2 newField = (2.0 * center.xy - oldField.xy)
-                        + c2_local * u_dt * u_dt * lensedLaplacian
-                        + u_dt * u_dt * (sourceTerm + backConversionTerm)
+                        + c2_eff_shg * (u_dt * u_dt) * lap
+                        + u_dt * u_dt * (upConversion + downConversion)
                         + u_dt * u_dt * localGain * center.xy;
+
+          newField += applyDispersion(center.xy, oldField.xy, dispersionCoeff, u_dt);
           newField *= u_damping;
 
-          // Example local measure of phase match quality
-          float localPhaseMatch = dot(mismatchTerm.xy, sourceTerm)
-                                / (length(mismatchTerm.xy) * length(sourceTerm) + 1e-10);
-
-          // Example ratio or dimensionless measure of SHG efficiency
-          float chiRatio = (u_chi * fund_amp2 * shgSaturFactor)
-                         / (n2_eff * shg_amp2 * kerrSat + 1e-10);
-
-          fragColor = vec4(
-              newField,
-              localPhaseMatch,
-              totalNon
-          );
+          fragColor = vec4(newField, localPhaseMatch, totalNon);
       }
   }
 `;
@@ -474,6 +511,9 @@ uniform sampler2D u_field;
 uniform int u_displayMode;  // 0 = wave, 1 = shg, 2 = lens
 uniform float u_lensDisplayMin;
 uniform float u_lensDisplayMax;
+uniform vec2 u_baseIndexRange;
+uniform vec2 u_chi2Range;
+uniform vec2 u_chi3Range;
 uniform float u_lensRadius;
 uniform vec2 u_resolution;
 
@@ -487,42 +527,49 @@ vec3 hsv2rgb(vec3 c) {
 }
 
 void main() {
-  if (u_displayMode == 2) {  // Lens display
-      vec2 center = vec2(0.5, 0.5);
-      vec2 fromCenter = uv - center;
+if (u_displayMode == 2) {  // Lens display
+   vec2 center = vec2(0.5, 0.5);
+   vec2 fromCenter = uv - center;
 
-      // this works because we always scale the lens to the full extent of the canvas
-      if (length(fromCenter) > .5) {
-          fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-          return;
-      }
+   if (length(fromCenter) > .5) {
+       fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+       return;
+   }
 
-      // Scale our sampling coordinates to only look within the lens radius
-      vec2 scaledUV = center + fromCenter * (u_lensRadius / (u_resolution.x * 0.5));
+   vec2 scaledUV = center + fromCenter * (u_lensRadius / (u_resolution.x * 0.5));
+   vec4 lens = texture(u_field, scaledUV);
 
-      // Check if we're outside the canvas
-      if (scaledUV.x < 0.0 || scaledUV.x > 1.0 ||
-          scaledUV.y < 0.0 || scaledUV.y > 1.0) {
-          fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-          return;
-      }
+   // Sample neighboring points
+   float eps = 1.0 / u_resolution.x;
+   vec4 dx = texture(u_field, scaledUV + vec2(eps, 0.0)) - lens;
+   vec4 dy = texture(u_field, scaledUV + vec2(0.0, eps)) - lens;
 
-      vec4 field = texture(u_field, scaledUV);
-      float amp = length(field.xy);
-      float phase = atan(field.y, field.x);
+   // Calculate relative spatial variations
+   float baseGrad = length(vec2(dx.x, dy.x)) / max(abs(lens.x - 1.0), 1e-6);
+   float dispGrad = length(vec2(dx.y, dy.y)) / max(lens.y, 1e-6);
+   float chi2Grad = length(vec2(dx.z, dy.z)) / max(lens.z, 1e-6);
+   float chi3Grad = length(vec2(dx.w, dy.w)) / max(lens.w, 1e-6);
 
-      float normAmp = clamp(
-          (amp - u_lensDisplayMin) / (u_lensDisplayMax - u_lensDisplayMin),
-          0.0, 1.0
-      );
+   // Calculate color components
+   float hueBias = 0.4;    // Shifted slightly to bring out warmer colors
+   float hueScale = 3.0;   // Increased spread for more color variation
+   float hue = hueBias + (atan(chi3Grad, chi2Grad) / (2.0 * 3.14159)) * hueScale;
 
-      float gamma = 0.4;
-      float val = pow(normAmp, gamma);
-      float hue = (phase + 3.14159) / 6.28318;
-      float sat = 1.0;
+   // Combine nonlinear and dispersion gradients for saturation
+   float nonlinearStrength = sqrt(chi2Grad * chi2Grad + chi3Grad * chi3Grad);
+   float combinedGrad = mix(nonlinearStrength, dispGrad, 0.3);  // 30% dispersion weight
+   float sat = sqrt(combinedGrad);
 
-      fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
-  } else {  // Wave or SHG display
+   // Base value on index gradient but modulate with dispersion
+   float val = 0.2 + 0.8 * (1.0 - exp(-baseGrad * 100.0));
+   val = mix(val, val * (1.0 - 0.2 * dispGrad), 0.2);  // 20% dispersion influence
+
+   // Enhance local contrast
+   sat = pow(sat, 0.25);
+   val = pow(val, 0.6);
+
+   fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
+} else {  // Wave or SHG display
         vec4 field = texture(u_field, uv);
         float amp = length(field.xy);
         float phase = atan(field.y, field.x);

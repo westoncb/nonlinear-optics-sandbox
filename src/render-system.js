@@ -91,8 +91,10 @@ export class RenderSystem {
 
     // Lens stats
     this.lensStatistics = {
-      displayMin: 0,
-      displayMax: 1,
+      baseIndex: { min: 1.0, max: 20.0 }, // typical refractive index range
+      dispersion: { min: 0.0, max: 10.0 },
+      chi2: { min: 0.0, max: 10.0 },
+      chi3: { min: 0.0, max: 10.0 },
     };
 
     // Quad buffers
@@ -161,14 +163,16 @@ export class RenderSystem {
       "u_dx",
       "u_damping",
       "u_c",
-      "u_chi_ratio",
       "u_shg_Isat",
       "u_kerr_Isat",
       "u_chi",
+      "u_chi2_ratio",
+      "u_chi_ratio",
       "u_resolution",
       "u_boundaryR0",
       "u_boundaryAlpha",
       "u_boundaryM",
+      "u_boundaryReflectivity",
       "u_updateTarget",
       "u_frameCount",
       "u_pulseInterval",
@@ -179,7 +183,6 @@ export class RenderSystem {
       "u_shg",
       "u_lambdaFund",
       "u_lambdaSHG",
-      "u_temperature",
       "u_phaseRef",
       "u_gainMask",
       "u_gain0",
@@ -202,6 +205,9 @@ export class RenderSystem {
       "u_displayMode",
       "u_lensDisplayMin",
       "u_lensDisplayMax",
+      "u_baseIndexRange",
+      "u_chi2Range",
+      "u_chi3Range",
       "u_lensRadius",
       "u_resolution",
     ];
@@ -374,7 +380,7 @@ export class RenderSystem {
     const fundamentalData = new Float32Array(
       this.config.gridSize * this.config.gridSize * 4,
     );
-    const zeroData = new Float32Array(
+    const shgData = new Float32Array(
       this.config.gridSize * this.config.gridSize * 4,
     );
 
@@ -389,70 +395,52 @@ export class RenderSystem {
     const sigma = Math.sqrt(kB * T) * scalingFactor;
 
     // Gaussian beam parameters
-    const w0 = this.config.initialBeamWidth; // beam waist
-    const z = 0; // assume we're at beam waist
-    const lambda = 1; // normalized wavelength
+    const w0 = this.config.initialBeamWidth;
+    const z = 0;
+    const lambda = 1;
     const k = (2 * Math.PI) / lambda;
-    const zR = (Math.PI * w0 * w0) / lambda; // Rayleigh range
+    const zR = (Math.PI * w0 * w0) / lambda;
 
     const centerX = Math.floor(this.config.gridSize / 2);
     const centerY = Math.floor(this.config.gridSize / 2);
 
-    for (let y = 0; y < this.config.gridSize; y++) {
-      for (let x = 0; x < this.config.gridSize; x++) {
-        const idx = (y * this.config.gridSize + x) * 4;
-        const amp = sigma * this.gaussianRandom(prng);
-        const phase = 2.0 * Math.PI * prng();
-        fundamentalData[idx] = amp * Math.cos(phase);
-        fundamentalData[idx + 1] = amp * Math.sin(phase);
-      }
-    }
-
-    for (let y = 0; y < this.config.gridSize; y++) {
-      for (let x = 0; x < this.config.gridSize; x++) {
-        const idx = (y * this.config.gridSize + x) * 4;
-        const amp = sigma * this.gaussianRandom(prng);
-        const phase = 2.0 * Math.PI * prng();
-        zeroData[idx] = amp * Math.cos(phase);
-        zeroData[idx + 1] = amp * Math.sin(phase);
-      }
-    }
-
+    // Initialize fundamental field
     if (this.config.useSimplePulse) {
-      const centerX = Math.floor(this.config.gridSize / 2);
-      const centerY = Math.floor(this.config.gridSize / 2);
+      // Simple Gaussian pulse for fundamental
       const beamWidth = this.config.initialBeamWidth;
-
       for (let j = -beamWidth; j <= beamWidth; j++) {
         for (let i = -beamWidth; i <= beamWidth; i++) {
           const x = centerX + i;
           const y = centerY + j;
-          const idx = (y * this.config.gridSize + x) * 4;
-          fundamentalData[idx] =
-            Math.exp(-(i * i + j * j) / 4) * this.config.initialPulseAmplitude;
-          fundamentalData[idx + 1] = this.config.initialPulsePhaseShift;
+          if (
+            x >= 0 &&
+            x < this.config.gridSize &&
+            y >= 0 &&
+            y < this.config.gridSize
+          ) {
+            const idx = (y * this.config.gridSize + x) * 4;
+            const amp =
+              Math.exp(-(i * i + j * j) / 4) *
+              this.config.initialPulseAmplitude;
+            const phase = this.config.initialPulsePhaseShift;
+            fundamentalData[idx] = amp * Math.cos(phase);
+            fundamentalData[idx + 1] = amp * Math.sin(phase);
+          }
         }
       }
     } else {
-      // Add Gaussian beam with phase terms
+      // Full Gaussian beam with phase terms for fundamental
       for (let y = 0; y < this.config.gridSize; y++) {
         for (let x = 0; x < this.config.gridSize; x++) {
           const idx = (y * this.config.gridSize + x) * 4;
-
           const dx = x - centerX;
           const dy = y - centerY;
           const r2 = dx * dx + dy * dy;
 
-          // Beam width at z
           const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
-
-          // Radius of curvature
           const R = z === 0 ? Infinity : z * (1 + (zR / z) ** 2);
-
-          // Gouy phase
           const gouyPhase = Math.atan(z / zR);
 
-          // Total phase including wavefront curvature and Gouy phase
           const phase =
             -k * z -
             (R === Infinity ? 0 : (k * r2) / (2 * R)) +
@@ -464,14 +452,36 @@ export class RenderSystem {
             (w0 / w) *
             Math.exp(-r2 / (w * w));
 
-          // Add to existing thermal noise
-          fundamentalData[idx] += amplitude * Math.cos(phase);
-          fundamentalData[idx + 1] += amplitude * Math.sin(phase);
+          // Add thermal noise to fundamental
+          const noiseAmp = sigma * this.gaussianRandom(prng);
+          const noisePhase = 2.0 * Math.PI * prng();
+
+          fundamentalData[idx] =
+            amplitude * Math.cos(phase) + noiseAmp * Math.cos(noisePhase);
+          fundamentalData[idx + 1] =
+            amplitude * Math.sin(phase) + noiseAmp * Math.sin(noisePhase);
         }
       }
     }
 
-    // Upload initial fields
+    // Initialize SHG field with very small noise only
+    const shgNoiseFactor = 0.01; // Much smaller noise for SHG
+    for (let y = 0; y < this.config.gridSize; y++) {
+      for (let x = 0; x < this.config.gridSize; x++) {
+        const idx = (y * this.config.gridSize + x) * 4;
+        const noiseAmp = sigma * shgNoiseFactor * this.gaussianRandom(prng);
+        const noisePhase = 2.0 * Math.PI * prng();
+        shgData[idx] = noiseAmp * Math.cos(noisePhase);
+        shgData[idx + 1] = noiseAmp * Math.sin(noisePhase);
+        // Initialize extra channels to zero
+        shgData[idx + 2] = 0;
+        shgData[idx + 3] = 0;
+        fundamentalData[idx + 2] = 0;
+        fundamentalData[idx + 3] = 0;
+      }
+    }
+
+    // Upload fundamental field textures
     this.fundamentalTextures.forEach((texture) => {
       this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, texture);
       this.mainGL.texImage2D(
@@ -487,6 +497,7 @@ export class RenderSystem {
       );
     });
 
+    // Upload SHG field textures
     this.shgTextures.forEach((texture) => {
       this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, texture);
       this.mainGL.texImage2D(
@@ -498,12 +509,12 @@ export class RenderSystem {
         0,
         this.mainGL.RGBA,
         this.mainGL.FLOAT,
-        zeroData,
+        shgData,
       );
     });
 
+    // Initialize gain mask
     const gainMaskData = this.createGainMaskData(this.config);
-
     const rgbaData = new Float32Array(
       this.config.gridSize * this.config.gridSize * 4,
     );
@@ -608,6 +619,7 @@ export class RenderSystem {
       this.config.gridSize,
       this.config.gridSize,
     );
+
     this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, this.lensTexture);
     this.mainGL.texImage2D(
       this.mainGL.TEXTURE_2D,
@@ -643,7 +655,10 @@ export class RenderSystem {
 
   updateLensStatistics() {
     const lensData = this.readFieldData(this.lensTexture);
-    let values = [];
+    let baseValues = [];
+    let dispersionValues = [];
+    let chi2Values = [];
+    let chi3Values = [];
 
     const centerX = Math.floor(this.config.gridSize / 2);
     const centerY = Math.floor(this.config.gridSize / 2);
@@ -655,17 +670,22 @@ export class RenderSystem {
         const r = Math.sqrt(dx * dx + dy * dy);
         if (r <= this.config.lensRadius) {
           const idx = (y * this.config.gridSize + x) * 4;
-          const LR = lensData[idx];
-          const LI = lensData[idx + 1];
-          const amp = Math.sqrt(LR * LR + LI * LI);
-          values.push(amp);
+          // Track each component separately
+          baseValues.push(lensData[idx]);
+          dispersionValues.push(lensData[idx + 1]);
+          chi2Values.push(lensData[idx + 2]);
+          chi3Values.push(lensData[idx + 3]);
         }
       }
     }
 
-    const range = stats.calculateDisplayRange(values);
-    this.lensStatistics.displayMin = range.min;
-    this.lensStatistics.displayMax = range.max;
+    // Calculate ranges for each component using your original IQR method
+    this.lensStatistics = {
+      baseIndex: stats.calculateDisplayRange(baseValues),
+      dispersion: stats.calculateDisplayRange(dispersionValues),
+      chi2: stats.calculateDisplayRange(chi2Values),
+      chi3: stats.calculateDisplayRange(chi3Values),
+    };
   }
 
   render() {
@@ -732,6 +752,7 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_damping, this.config.damping);
     gl.uniform1f(uniforms.u_c, this.config.c);
     gl.uniform1f(uniforms.u_chi_ratio, this.config.chi_ratio);
+    gl.uniform1f(uniforms.u_chi2_ratio, this.config.chi2_ratio);
     gl.uniform1f(uniforms.u_shg_Isat, this.config.shg_Isat);
     gl.uniform1f(uniforms.u_kerr_Isat, this.config.kerr_Isat);
     gl.uniform1f(uniforms.u_chi, this.config.chi);
@@ -745,6 +766,10 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_boundaryR0, this.config.boundaryR0);
     gl.uniform1f(uniforms.u_boundaryAlpha, this.config.boundaryAlpha);
     gl.uniform1f(uniforms.u_boundaryM, this.config.boundaryM);
+    gl.uniform1f(
+      uniforms.u_boundaryReflectivity,
+      this.config.boundaryReflectivity,
+    );
 
     // Timekeeping / update settings
     gl.uniform1i(uniforms.u_updateTarget, updateTarget);
@@ -754,7 +779,6 @@ export class RenderSystem {
     // New uniforms for cross-Kerr or additional modeling
     gl.uniform1f(uniforms.u_lambdaFund, this.config.lambdaFund || 40.0);
     gl.uniform1f(uniforms.u_lambdaSHG, this.config.lambdaSHG || 20.0);
-    gl.uniform1f(uniforms.u_temperature, this.config.temperature || 22.0);
     gl.uniform1f(uniforms.u_phaseRef, this.config.phaseRef || 0.0);
     gl.uniform1f(uniforms.u_gain0, this.config.gain0 || 1.0);
     gl.uniform1f(uniforms.u_gainSat, this.config.gainSat || 1.0);
@@ -857,6 +881,21 @@ export class RenderSystem {
 
       gl.uniform1f(uniforms.u_lensDisplayMin, this.lensStatistics.displayMin);
       gl.uniform1f(uniforms.u_lensDisplayMax, this.lensStatistics.displayMax);
+      gl.uniform2f(
+        uniforms.u_baseIndexRange,
+        this.lensStatistics.baseIndex.min,
+        this.lensStatistics.baseIndex.max,
+      );
+      gl.uniform2f(
+        uniforms.u_chi2Range,
+        this.lensStatistics.chi2.min,
+        this.lensStatistics.chi2.max,
+      );
+      gl.uniform2f(
+        uniforms.u_chi3Range,
+        this.lensStatistics.chi3.min,
+        this.lensStatistics.chi3.max,
+      );
       gl.uniform1f(uniforms.u_lensRadius, this.config.lensRadius);
       gl.uniform2f(
         uniforms.u_resolution,

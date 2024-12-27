@@ -1,59 +1,101 @@
 export const constants = {
-  GRID_SIZE: 512,
+  GRID_SIZE: 256,
   PREVIEW_SIZE: 200,
 };
 
 // Default configuration values
 const defaultConfigData = {
   // Core simulation parameters
+  // Temporal step size for numerical integration of wave equation
   dt: 0.1,
+  // Spatial grid spacing
   dx: 1,
+  // Number of grid points in each dimension (square grid)
   gridSize: constants.GRID_SIZE,
-  damping: 1,
+  // Field amplitude preservation factor (1 = perfect preservation)
+  damping: 0.9999,
+  // Speed of light in simulation units
   c: 1,
-  use9PointStencil: false,
+  // Toggle between 5-point and 9-point Laplacian stencil
+  use9PointStencil: true,
 
-  // Nonlinear parameters
-  chi: 0.2,
-  chi_ratio: -40,
-  shg_Isat: 0.08,
-  kerr_Isat: 0.08,
+  // Nonlinear optical parameters
+  // Base strength of nonlinear optical effects
+  chi: 0.8,
+  // Relative strength of Kerr (χ(3)) nonlinearity
+  chi_ratio: -12,
+  // Relative strength of second-harmonic (χ(2)) nonlinearity
+  chi2_ratio: 1.0,
+  // Intensity at which SHG conversion begins to saturate
+  shg_Isat: 0.1,
+  // Intensity at which Kerr effect begins to saturate
+  kerr_Isat: 0.1,
 
-  crossKerrCoupling: 0.004,
-  conversionCoupling: 0.0008,
+  // Coupling parameters
+  // Strength of Kerr-mediated interaction between fundamental and SHG fields
+  crossKerrCoupling: 0.001,
+  // Efficiency of frequency conversion between fundamental and SHG
+  conversionCoupling: 0.005,
 
-  gain0: 4.0,
-  gainSat: 0.1,
-  linearLoss: 0.2,
+  // Gain and loss parameters
+  // Maximum small-signal gain coefficient
+  gain0: 0.5,
+  // Intensity at which gain medium begins to saturate
+  gainSat: 0.5,
+  // Rate of passive power loss in cavity
+  linearLoss: 0.001,
 
-  // Phase-matching
-  lambdaFund: 100.0,
-  lambdaSHG: 10.0, // 10:1 ratio
-  temperature: 22.0,
-  phaseRef: Math.PI * 1.5,
+  // Wave properties
+  // Wavelength of fundamental field in grid units
+  lambdaFund: 20.0,
+  // Wavelength of second harmonic (must be lambdaFund/2 for phase matching)
+  lambdaSHG: 10.0,
+  // Reference phase for evaluating phase matching conditions
+  phaseRef: Math.PI,
 
-  // Standard boundary and geometry
+  // Cavity geometry
+  // Amplitude of boundary shape modulation (0 = perfect circle)
   boundaryAlpha: 0.2,
+  // Number of symmetric perturbations around cavity boundary
   boundaryM: 8,
+  // Width of border region in grid points
   margin: 10,
-  boundaryReflectivity: "1",
-  lensRadius: 32,
-  fresnelZones: 12,
-  numSectors: 84,
+  // Fraction of field amplitude reflected at boundary
+  boundaryReflectivity: 0.98,
 
-  updateStrategy: "original2",
-  learningRate: 1e-6,
+  // Adaptive lens parameters
+  // Radius of lens region in grid points
+  lensRadius: 48,
+  // Number of phase wraps from center to edge of lens
+  fresnelZones: 32,
+  // Number of independently adjustable regions in lens
+  numSectors: 168,
+
+  // Optimization controls
+  // Selected optimization algorithm
+  updateStrategy: "phaseMatchAsymmetric",
+  // Step size for lens parameter updates
+  learningRate: 5e-7,
+  // Update lens every N simulation steps
   optimizationInterval: 1,
-  disableAdaptation: true,
+  // Toggle lens optimization
+  disableAdaptation: false,
 
-  // Initial conditions
+  // Initial condition parameters
+  // Number of steps between pulse injections (0 = single pulse)
   pulseInterval: 0,
-  initialPulseAmplitude: 86,
-  initialPulsePhaseShift: 0.0,
+  // Initial pulse peak amplitude
+  initialPulseAmplitude: 60,
+  // Initial pulse phase offset
+  initialPulsePhaseShift: 0,
+  // Toggle between simple and Gaussian pulse shapes
   useSimplePulse: false,
-  initialNoiseScale: 0,
+  // Amplitude of random fluctuations in initial field
+  initialNoiseScale: 0.001,
+  // Initial pulse width in grid units
   initialBeamWidth: 4,
 };
+
 export const referenceConfig = {
   data: defaultConfigData,
   metadata: {
