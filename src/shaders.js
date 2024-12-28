@@ -143,27 +143,77 @@ export const getSimulationShaderSource = (config) => {
       return -normalize(normal);
   }
 
-  // A helper to do a simpler TE Fresnel reflectivity:
+  float boundaryDampingFactor(vec2 pos) {
+    float u_shellWidth = 2.;
+
+      // 1) Get position relative to center in polar coordinates
+      vec2 center = 0.5 * u_resolution;
+      vec2 rel = pos - center;
+      float r = length(rel);
+      float theta = atan(rel.y, rel.x);
+
+      // 2) Calculate modulated boundary radius at this angle
+      float boundaryRadius = u_boundaryR0 * (1.0 + u_boundaryAlpha * cos(u_boundaryM * theta));
+
+      // 3) If inside modulated boundary, no damping
+      if (r <= boundaryRadius) {
+          return 1.0;
+      }
+
+      // 4) Calculate distance past boundary
+      float distPast = r - boundaryRadius;
+      if (distPast >= u_shellWidth) {
+          return 0.0;  // Far outside => complete damping
+      }
+
+      // 5) Smooth transition from 1.0 to 0.0
+      // Optional: Could use smoother transition like cosine instead of linear
+      float t = distPast / u_shellWidth;
+      // return 1.0 - t;  // Linear falloff
+      return 0.5 * (1.0 + cos(PI * t));  // Cosine falloff (smoother)
+  }
+
   float fresnelReflectivity_TE(float n_in, float n_out, float theta_i) {
-      // Snell's law: n_in * sin(theta_i) = n_out * sin(theta_t)
+      // Ensure valid indices and angle
+      n_in = max(n_in, 1e-6);
+      n_out = max(n_out, 1e-6);
+      theta_i = clamp(theta_i, 0.0, PI/2.0);  // Restrict to [0, π/2]
+
+      // Check for total internal reflection
+      float crit_angle = (n_out < n_in) ? asin(n_out/n_in) : PI;
+      if (theta_i > crit_angle) {
+          return 1.0;
+      }
+
+      // Fresnel calculation with safeguards
       float sin_t = (n_in / n_out) * sin(theta_i);
-      // clamp to avoid domain errors
       sin_t = clamp(sin_t, -1.0, 1.0);
 
       float theta_t = asin(sin_t);
-
-      // TE reflectivity: R_TE = |(n_in cos(theta_i) - n_out cos(theta_t)) /
-      //                          (n_in cos(theta_i) + n_out cos(theta_t))|^2
       float cos_i = cos(theta_i);
       float cos_t = cos(theta_t);
 
+      // Add small epsilon to prevent division by zero
+      const float eps = 1e-6;
       float r_num = (n_in * cos_i) - (n_out * cos_t);
-      float r_den = (n_in * cos_i) + (n_out * cos_t);
-      float r     = r_num / r_den;
-      return r * r;
+      float r_den = (n_in * cos_i) + (n_out * cos_t) + eps;
+      float r = r_num / r_den;
+      return r * r;  // Ensure output is valid reflectivity
   }
 
   float fresnelReflectivity_TM(float n_in, float n_out, float theta_i) {
+      // Ensure valid indices and angle
+      n_in = max(n_in, 1e-6);
+      n_out = max(n_out, 1e-6);
+      theta_i = clamp(theta_i, 0.0, PI/2.0);  // Restrict to [0, π/2]
+
+      // Check for total internal reflection
+      float crit_angle = (n_out < n_in) ? asin(n_out/n_in) : PI;
+      if (theta_i > crit_angle) {
+          return 1.0;
+      }
+
+      // Fresnel calculation with safeguards
       float sin_t = (n_in / n_out) * sin(theta_i);
       sin_t = clamp(sin_t, -1.0, 1.0);
       float theta_t = asin(sin_t);
@@ -171,33 +221,109 @@ export const getSimulationShaderSource = (config) => {
       float cos_i = cos(theta_i);
       float cos_t = cos(theta_t);
 
+      // Add small epsilon to prevent division by zero
+      const float eps = 1e-6;
       float r_num = (n_out * cos_i) - (n_in * cos_t);
-      float r_den = (n_out * cos_i) + (n_in * cos_t);
-      float r     = r_num / r_den;
-      return r * r;
+      float r_den = (n_out * cos_i) + (n_in * cos_t) + eps;
+      float r = r_num / r_den;
+      return r * r;  // Ensure output is valid reflectivity
   }
 
-  float computeAngleDependentReflectivity(vec2 pos, vec2 texel) {
-      vec2 centerVal = texture(u_current, pos * texel).xy;
+  struct BoundaryProps {
+      vec2  normal;      // Boundary normal vector (points inward)
+      float theta_i;     // Angle of incidence
+      float n_local;     // Local refractive index
+      vec2  kvec;        // Local wave vector direction
+      float amp2;        // Field intensity
+      bool  validField;  // Whether field is strong enough for meaningful calculations
+  };
 
-      // 1) If amplitude is too small, skip
-      if (dot(centerVal, centerVal) < 1e-9) return 0.0;
+  BoundaryProps computeBoundaryProperties(vec2 pos, vec2 texel) {
+      BoundaryProps props;
 
-      // 2) Get local wave-vector direction, etc.
-      vec2 kvec = calculatePhaseGradients(pos, texel, vec4(centerVal, 0.0, 0.0));
-      float cos_in = dot(normalize(kvec), boundaryNormal(pos)); // define a boundaryNormal(pos)
-      float theta_i = acos(clamp(cos_in, -1.0, 1.0));
+      // 1) Get local field
+      vec4 centerVal = texture(u_current, pos * texel);
+      props.amp2 = dot(centerVal.xy, centerVal.xy);
 
-      // 3) Local index inside vs. outside
-      float n_local = max(texture(u_lens, pos * texel).x, 1e-6);
+      // Check if field is strong enough for meaningful calculations
+      const float MIN_FIELD_STRENGTH = 1e-9;
+      props.validField = (props.amp2 >= MIN_FIELD_STRENGTH);
 
-      float R_TE = fresnelReflectivity_TE(n_local, 1.0, theta_i);
-      float R_TM = fresnelReflectivity_TM(n_local, 1.0, theta_i);
+      if (!props.validField) {
+          // Set defaults for weak field case
+          props.normal = vec2(0.0);
+          props.theta_i = 0.0;
+          props.n_local = 1.0;
+          props.kvec = vec2(0.0);
+          return props;
+      }
 
-      // 4) Weighted or averaged reflection
-      float R_avg = 0.5 * (R_TE + R_TM);
+      // 2) Get local wave-vector direction
+      props.kvec = calculatePhaseGradients(pos, texel, centerVal);
 
-      return R_avg;
+      // 3) Get boundary normal at this position
+      props.normal = boundaryNormal(pos);
+
+      // 4) Calculate angle of incidence
+      float cos_in = dot(normalize(props.kvec), props.normal);
+      props.theta_i = acos(clamp(cos_in, -1.0, 1.0));
+
+      // 5) Get local refractive index
+      vec4 lensVal = texture(u_lens, pos * texel);
+      props.n_local = max(lensVal.x, 1.0);  // Ensure not less than vacuum
+
+      return props;
+  }
+
+  // Helper to compute both TE and TM reflectivities
+  struct FresnelCoeffs {
+      float R_TE;
+      float R_TM;
+      float R_avg;
+  };
+
+  FresnelCoeffs computeFresnelCoefficients(BoundaryProps props) {
+      FresnelCoeffs coeffs;
+
+      if (!props.validField) {
+          coeffs.R_TE = 0.0;
+          coeffs.R_TM = 0.0;
+          coeffs.R_avg = 0.0;
+          return coeffs;
+      }
+
+      // Compute both polarization states
+      coeffs.R_TE = fresnelReflectivity_TE(props.n_local, 1.0, props.theta_i);
+      coeffs.R_TM = fresnelReflectivity_TM(props.n_local, 1.0, props.theta_i);
+      coeffs.R_avg = 0.5 * (coeffs.R_TE + coeffs.R_TM);
+
+      return coeffs;
+  }
+
+  vec4 computeBoundaryField(vec2 pos, vec2 texel) {
+      // 1) Get boundary properties
+      BoundaryProps props = computeBoundaryProperties(pos, texel);
+
+      if (!props.validField) {
+          return vec4(0.0);
+      }
+
+      // 2) Compute Fresnel coefficients with validation
+      FresnelCoeffs coeffs = computeFresnelCoefficients(props);
+
+      // 3) Get current field
+      vec4 current = texture(u_current, pos * texel);
+
+      // 4) Compute reflected and transmitted parts with validation
+      vec2 reflectPart = current.xy * coeffs.R_avg;
+      vec2 transmitPart = current.xy * (1.0 - coeffs.R_avg);
+
+      float damp = boundaryDampingFactor(pos);  // Smooth spatial transition
+
+      // 5) Apply damping to transmitted part
+      vec2 outField = reflectPart + transmitPart * damp;
+
+      return vec4(outField, 0.0, 0.0);
   }
 
   /*----------------------------------------------------------
@@ -335,204 +461,205 @@ export const getSimulationShaderSource = (config) => {
       return dispersionCoeff * secondTimeDerivativeApprox * (dt * dt);
   }
 
+  // Struct to hold common field properties
+  struct FieldState {
+      vec2 field;           // Current field value
+      vec2 oldField;        // Previous field value
+      float amp2;           // Field intensity
+      float wavelength;     // Field wavelength
+  };
+
+  // Struct to hold material properties
+  struct MaterialProps {
+      float n_base;         // Base refractive index
+      float n_eff;          // Effective index with nonlinear contributions
+      float c2_eff;         // Effective speed squared
+      float chi2_local;     // Local chi(2) coefficient
+      float chi3_local;     // Local chi(3) coefficient
+      float dispCoeff;      // Dispersion coefficient
+  };
+
+  // Struct to hold conversion terms
+  struct ConversionTerms {
+      vec2 upConversion;
+      vec2 downConversion;
+      float phaseMatch;
+  };
+
+  // Compute material properties for a given field
+  MaterialProps computeMaterialProperties(vec2 pos, vec2 texel, FieldState state, float otherAmp2) {
+      MaterialProps props;
+      vec4 lensVal = texture(u_lens, pos * texel);
+
+      // Base index including angle dependence
+      props.n_base = computeAngleDependentBaseIndex(pos, texel);
+      props.n_base = getWavelengthDependentIndex(
+          props.n_base,
+          lensVal.y,  // dispersion coefficient
+          state.wavelength
+      );
+
+      // Nonlinear coefficients
+      props.chi3_local = u_chi * u_chi * u_chi_ratio * lensVal.w;
+      props.chi2_local = u_chi * u_chi2_ratio * lensVal.z;
+      props.dispCoeff = lensVal.y;
+
+      // Kerr effects
+      float kerrSatFactor = 1.0 / (1.0 + state.amp2 / u_kerr_Isat);
+      float kerrSelf = props.chi3_local * state.amp2 * kerrSatFactor;
+      float kerrCross = u_crossKerrCoupling * props.chi3_local * otherAmp2 * kerrSatFactor;
+
+      // Effective index and speed
+      props.n_eff = props.n_base + kerrSelf + kerrCross;
+      props.n_eff = max(props.n_eff, 1e-6);
+      float c_eff = u_c / props.n_eff;
+      props.c2_eff = min(c_eff * c_eff, 1.0);
+
+      return props;
+  }
+
+  // Compute conversion terms between fundamental and SHG
+  ConversionTerms computeConversionTerms(
+      vec2 pos, vec2 texel,
+      FieldState fund, FieldState shg,
+      MaterialProps props, bool isFundamental
+  ) {
+      ConversionTerms terms;
+
+      vec4 mismatchTerm = calculatePhaseMismatchTerm(pos, texel, vec4(fund.field, 0.0, 0.0));
+      float saturationFactor = 1.0 / (1.0 + fund.amp2 / u_shg_Isat);
+
+      if (isFundamental) {
+          // Fundamental loses two photons in up-conversion
+          terms.upConversion = -2.0 * u_conversionCoupling * props.chi2_local
+                           * fund.amp2 * saturationFactor * mismatchTerm.xy;
+          terms.downConversion = u_conversionCoupling * props.chi2_local
+                             * shg.amp2 * mismatchTerm.xy;
+      } else {
+          // SHG gains one photon for every two fundamental photons
+          terms.upConversion = u_conversionCoupling * props.chi2_local
+                           * fund.amp2 * saturationFactor * mismatchTerm.xy;
+          terms.downConversion = -u_conversionCoupling * props.chi2_local
+                             * shg.amp2 * mismatchTerm.xy;
+      }
+
+      // Phase matching measure
+      float upMatch = dot(mismatchTerm.xy, terms.upConversion)
+                   / (length(mismatchTerm.xy) * length(terms.upConversion) + 1e-10);
+      float downMatch = dot(mismatchTerm.xy, terms.downConversion)
+                     / (length(mismatchTerm.xy) * length(terms.downConversion) + 1e-10);
+      terms.phaseMatch = sign(upMatch) * sqrt(abs(upMatch * downMatch));
+
+      return terms;
+  }
+
+  // Compute the interior field evolution
+  vec4 computeInteriorField(vec2 pos, vec2 texel, bool isFundamental) {
+      // 1) Get field states
+      vec4 center = texture(u_current, pos * texel);
+      vec4 oldField = texture(u_previous, pos * texel);
+
+      FieldState primary, other;
+      vec4 otherTex;
+
+      if (isFundamental) {
+          primary = FieldState(
+              center.xy,
+              oldField.xy,
+              dot(center.xy, center.xy),
+              u_lambdaFund
+          );
+          otherTex = texture(u_shg, pos * texel);
+          other = FieldState(
+              otherTex.xy,
+              vec2(0.0),
+              dot(otherTex.xy, otherTex.xy),
+              u_lambdaSHG
+          );
+      } else {
+          primary = FieldState(
+              center.xy,
+              oldField.xy,
+              dot(center.xy, center.xy),
+              u_lambdaSHG
+          );
+          otherTex = texture(u_fundamental, pos * texel);
+          other = FieldState(
+              otherTex.xy,
+              vec2(0.0),
+              dot(otherTex.xy, otherTex.xy),
+              u_lambdaFund
+          );
+      }
+
+      // 2) Compute material properties
+      MaterialProps props = computeMaterialProperties(pos, texel, primary, other.amp2);
+
+      // 3) Compute conversion terms
+      ConversionTerms conv;
+      if (isFundamental) {
+          conv = computeConversionTerms(pos, texel, primary, other, props, true);
+      } else {
+          conv = computeConversionTerms(pos, texel, other, primary, props, false);
+      }
+
+      // 4) Compute gain
+      float localGain = u_gain0 / (1.0 + primary.amp2 / u_gainSat) - u_linearLoss;
+      localGain *= texture(u_gainMask, pos * texel).r;
+
+      // 5) Evolution
+      vec2 lap = ${config.use9PointStencil ? "nine" : "five"}PointLaplacian(pos, texel, center);
+      vec2 newField = (2.0 * primary.field - primary.oldField)
+                    + props.c2_eff * (u_dt * u_dt) * lap
+                    + u_dt * u_dt * (conv.upConversion + conv.downConversion)
+                    + u_dt * u_dt * localGain * primary.field;
+
+      // 6) Add dispersion and damping
+      newField += applyDispersion(primary.field, primary.oldField, props.dispCoeff, u_dt);
+
+      // 7) Optional pulse injection for fundamental
+      if (isFundamental && u_pulseInterval > 0 && (u_frameCount % u_pulseInterval == 0)) {
+          float w0 = 4.0;
+          vec2 centerGrid = 0.5 * u_resolution;
+          vec2 rel = pos - centerGrid;
+          float r2 = dot(rel, rel);
+          float amplitude = 0.01 * exp(-r2/(w0*w0));
+          newField += amplitude * vec2(1.0, 0.0);  // Real pulse
+      }
+
+      newField *= u_damping;
+
+      return vec4(newField, conv.phaseMatch, props.n_eff - props.n_base);
+  }
+
   // =======================================
   // Main
   // =======================================
   void main() {
-      vec2 pos   = gl_FragCoord.xy;
+      vec2 pos = gl_FragCoord.xy;
       vec2 texel = 1.0 / u_resolution;
 
-      // -----------------------------------
-      // 1) Boundary logic with angle-dependent reflection
-      // -----------------------------------
-      if (!insideBoundary(pos)) {
-          // If outside boundary, reflect wave with angle-dependent Fresnel logic
-          vec4 current = texture(u_current, pos * texel);
+      // Get boundary damping factor
+      float damp = boundaryDampingFactor(pos);
 
-          // For a real mirrored cavity boundary:
-          float boundaryReflectivity = computeAngleDependentReflectivity(pos, texel);
+      if (damp < 1.0) {
+          // We're in or beyond boundary region
+          vec4 boundaryResult = computeBoundaryField(pos, texel);
 
-          // Multiply field by reflection coefficient
-          vec2 reflectedField = current.xy * boundaryReflectivity;
+          if (damp <= 0.0) {
+              // Fully outside
+              fragColor = boundaryResult;
+              return;
+          }
 
-          // Typically we won't compute localPhaseMatch or totalNon outside
-          // the boundary, so set them to zero (or some sentinel).
-          fragColor = vec4(reflectedField, 0.0, 0.0);
+          // In transition region - compute interior physics too and blend
+          vec4 interiorResult = computeInteriorField(pos, texel, u_updateTarget == 0);
+          fragColor = mix(boundaryResult, interiorResult, damp);
           return;
       }
 
-      // -----------------------------------
-      // 2) Fetch fields
-      // -----------------------------------
-      vec4 center   = texture(u_current, pos * texel);
-      vec4 oldField = texture(u_previous, pos * texel);
-      vec4 lensVal  = texture(u_lens, pos * texel);
-
-      // For convenience
-      float amp2 = dot(center.xy, center.xy);
-
-      // -----------------------------------
-      // 3) Angle-dependent base index
-      // -----------------------------------
-      float n_baseAngle = computeAngleDependentBaseIndex(pos, texel);
-
-      // -----------------------------------
-      // 4) Kerr shift
-      //     n_kerr = chi3_local * amp^2 / (1 + amp^2/I_sat)
-      // -----------------------------------
-      float chi3_local = u_chi * u_chi * u_chi_ratio * lensVal.w;  // lensVal.w used for local chi(3)
-      float kerrSatFactor  = 1.0 / (1.0 + amp2 / u_kerr_Isat);
-      float n_kerr         = chi3_local * amp2 * kerrSatFactor;
-
-
-      // -----------------------------------
-      // 5) Combine into total index => local speed
-      // -----------------------------------
-      // We'll add cross-Kerr separately. Here is just the base + self-Kerr:
-      float n_eff = n_baseAngle + n_kerr;
-      n_eff = max(n_eff, 1e-6);  // clamp to avoid div by zero
-
-      float c_local = u_c / n_eff;
-      float c2_local = c_local * c_local;
-
-      float dispersionCoeff = lensVal.y;
-
-      // -----------------------------------
-      // 6) Saturable gain
-      // localGain = gain0/(1+amp2/gainSat) - linearLoss
-      // -----------------------------------
-      float localGain = u_gain0 / (1.0 + amp2 / u_gainSat) - u_linearLoss;
-      float gainMaskVal = texture(u_gainMask, pos * texel).r;
-      localGain *= gainMaskVal;
-
-      // We'll store placeholders for localPhaseMatch & totalNon for final output.
-      float localPhaseMatch = 0.0;
-      float totalNon        = 0.0;
-
-      // -----------------------------------
-      // 7) Switch: Fundamental or SHG update
-      // -----------------------------------
-      if (u_updateTarget == 0) {
-          // === Fundamental update ===
-          vec4 shg = texture(u_shg, pos * texel);
-          float shg_amp2 = dot(shg.xy, shg.xy);
-          float fund_amp2 = amp2;
-
-          // Base refractive index
-          float n_baseAngle = computeAngleDependentBaseIndex(pos, texel);
-          float n_fund = getWavelengthDependentIndex(n_baseAngle, dispersionCoeff, u_lambdaFund);
-
-          // Kerr effects
-          float chi3_local = u_chi * u_chi * u_chi_ratio * lensVal.w;
-          float fundKerrSatFactor = 1.0 / (1.0 + fund_amp2 / u_kerr_Isat);
-          float kerrSelf = chi3_local * fund_amp2 * fundKerrSatFactor;
-          float kerrCross = u_crossKerrCoupling * chi3_local * shg_amp2 * fundKerrSatFactor;
-          totalNon = kerrSelf + kerrCross;
-
-          // Total effective index and speed
-          float n_eff_f = n_fund + totalNon;
-          n_eff_f = max(n_eff_f, 1e-6);
-          float c_eff_f = u_c / n_eff_f;
-          float c2_eff_f = c_eff_f * c_eff_f;
-          c2_eff_f = min(c2_eff_f, 1.);
-
-          // Phase mismatch and conversion
-          vec4 mismatchTerm = calculatePhaseMismatchTerm(pos, texel, center);
-          float chi2_local = u_chi * u_chi2_ratio * lensVal.z;  // lensVal.z used for local chi(2)
-
-          // Fundamental branch - should lose twice the energy it contributes to SHG
-          vec2 upConversion = -2.0 * u_conversionCoupling * chi2_local * fund_amp2
-                            * (1.0 / (1.0 + fund_amp2 / u_shg_Isat))
-                            * mismatchTerm.xy;
-          vec2 downConversion = u_conversionCoupling * chi2_local * shg_amp2
-                             * mismatchTerm.xy;
-
-          // Phase matching measure using both up/down conversion
-          float upMatch = dot(mismatchTerm.xy, upConversion)
-                       / (length(mismatchTerm.xy) * length(upConversion) + 1e-10);
-          float downMatch = dot(mismatchTerm.xy, downConversion)
-                         / (length(mismatchTerm.xy) * length(downConversion) + 1e-10);
-          localPhaseMatch = sign(upMatch) * sqrt(abs(upMatch * downMatch));
-
-          // Standard leapfrog
-          vec2 lap = ${config.use9PointStencil ? "nine" : "five"}PointLaplacian(pos, texel, center);
-          vec2 newField = (2.0 * center.xy - oldField.xy)
-                        + c2_eff_f * (u_dt * u_dt) * lap
-                        + u_dt * u_dt * downConversion
-                        + u_dt * u_dt * localGain * center.xy;
-
-          // dispersion
-          newField += applyDispersion(center.xy, oldField.xy, dispersionCoeff, u_dt);
-
-          // Optional pulsed injection
-          if (u_pulseInterval > 0 && (u_frameCount % u_pulseInterval == 0)) {
-              float w0 = 4.0;
-              vec2 centerGrid = 0.5 * u_resolution;
-              vec2 rel = pos - centerGrid;
-              float r2 = dot(rel, rel);
-              float amplitude = 0.01 * exp(-r2/(w0*w0));
-              float phase = 0.0;
-              vec2 pulseField = amplitude * vec2(cos(phase), sin(phase));
-              newField += pulseField;
-          }
-
-          newField *= u_damping;
-          fragColor = vec4(newField, localPhaseMatch, totalNon);
-
-      } else {
-          // === SHG update ===
-          vec4 fund = texture(u_fundamental, pos * texel);
-          float fund_amp2 = dot(fund.xy, fund.xy);
-          float shg_amp2 = amp2;
-
-          // Base refractive index combining angle
-          float n_baseAngle = computeAngleDependentBaseIndex(pos, texel);
-          float n_shg = getWavelengthDependentIndex(n_baseAngle, dispersionCoeff, u_lambdaSHG);
-
-          // Kerr effects
-          float chi3_local = u_chi * u_chi * u_chi_ratio * lensVal.w;
-          float shgKerrSatFactor = 1.0 / (1.0 + shg_amp2 / u_kerr_Isat);
-          float kerrSelf = chi3_local * shg_amp2 * shgKerrSatFactor;
-          float kerrCross = u_crossKerrCoupling * chi3_local * fund_amp2 * shgKerrSatFactor;
-          totalNon = kerrSelf + kerrCross;
-
-          // Total effective index and speed
-          float n_eff_shg = n_shg + totalNon;
-          n_eff_shg = max(n_eff_shg, 1e-6);
-          float c_eff_shg = u_c / n_eff_shg;
-          float c2_eff_shg = c_eff_shg * c_eff_shg;
-          c2_eff_shg = min(c2_eff_shg, 1.);
-
-          // Phase mismatch and conversion
-          vec4 mismatchTerm = calculatePhaseMismatchTerm(pos, texel, center);
-          float chi2_local = u_chi * lensVal.z;  // lensVal.z used for local chi(2)
-
-          // SHG branch - gets one photon for every two fundamental photons
-          vec2 upConversion = u_conversionCoupling * chi2_local * fund_amp2
-                            * (1.0 / (1.0 + fund_amp2 / u_shg_Isat))
-                            * mismatchTerm.xy;
-          vec2 downConversion = -u_conversionCoupling * chi2_local * shg_amp2
-                             * mismatchTerm.xy;
-
-          // Phase matching measure using both up/down conversion
-          float upMatch = dot(mismatchTerm.xy, upConversion)
-                       / (length(mismatchTerm.xy) * length(upConversion) + 1e-10);
-          float downMatch = dot(mismatchTerm.xy, downConversion)
-                         / (length(mismatchTerm.xy) * length(downConversion) + 1e-10);
-          localPhaseMatch = sign(upMatch) * sqrt(abs(upMatch * downMatch));
-
-          // Standard leapfrog
-          vec2 lap = ${config.use9PointStencil ? "nine" : "five"}PointLaplacian(pos, texel, center);
-          vec2 newField = (2.0 * center.xy - oldField.xy)
-                        + c2_eff_shg * (u_dt * u_dt) * lap
-                        + u_dt * u_dt * (upConversion + downConversion)
-                        + u_dt * u_dt * localGain * center.xy;
-
-          newField += applyDispersion(center.xy, oldField.xy, dispersionCoeff, u_dt);
-          newField *= u_damping;
-
-          fragColor = vec4(newField, localPhaseMatch, totalNon);
-      }
+      // Fully inside cavity
+      fragColor = computeInteriorField(pos, texel, u_updateTarget == 0);
   }
 `;
 };
