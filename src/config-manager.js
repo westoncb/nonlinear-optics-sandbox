@@ -7,7 +7,7 @@ export const constants = {
 const defaultConfigData = {
   // Core simulation parameters
   // Temporal step size for numerical integration of wave equation
-  dt: 0.15,
+  dt: 0.25,
   // Spatial grid spacing
   dx: 1,
   // Number of grid points in each dimension (square grid)
@@ -60,8 +60,8 @@ const defaultConfigData = {
   boundaryM: 8,
   // Width of border region in grid points
   margin: 10,
-  // Fraction of field amplitude reflected at boundary
-  boundaryReflectivity: 0.98,
+  // Width of smooth transition region at boundary (in grid points)
+  boundaryTransitionWidth: 2,
 
   // Adaptive lens parameters
   // Radius of lens region in grid points
@@ -73,7 +73,7 @@ const defaultConfigData = {
 
   // Optimization controls
   // Selected optimization algorithm
-  updateStrategy: "phaseMatch",
+  updateStrategy: "phaseMatchAsymmetric",
   // Step size for lens parameter updates
   learningRate: 1e-7,
   // Update lens every N simulation steps
@@ -81,19 +81,19 @@ const defaultConfigData = {
   // Toggle lens optimization
   disableAdaptation: false,
 
-  // Initial condition parameters
   // Number of steps between pulse injections (0 = single pulse)
-  pulseInterval: 0,
+  pulseInterval: 100,
+  // Peak amplitude of all pulses after initial
+  subsequentPulseAmplitude: 0.1,
+  // Beam waist/width for a Gaussian pulse in grid units
+  beamWidth: 42,
+
   // Initial pulse peak amplitude
   initialPulseAmplitude: 2,
   // Initial pulse phase offset
   initialPulsePhaseShift: 0,
-  // Toggle between simple and Gaussian pulse shapes
-  useSimplePulse: false,
   // Amplitude of random fluctuations in initial field
-  initialNoiseScale: 1e-4,
-  // Initial pulse width in grid units
-  initialBeamWidth: 4,
+  initialNoiseScale: 1e-6,
 };
 
 export const referenceConfig = {

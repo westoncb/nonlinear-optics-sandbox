@@ -172,7 +172,7 @@ export class RenderSystem {
       "u_boundaryR0",
       "u_boundaryAlpha",
       "u_boundaryM",
-      "u_boundaryReflectivity",
+      "u_boundaryTransitionWidth",
       "u_updateTarget",
       "u_frameCount",
       "u_pulseInterval",
@@ -190,6 +190,8 @@ export class RenderSystem {
       "u_linearLoss",
       "u_crossKerrCoupling",
       "u_conversionCoupling",
+      "u_beamWidth",
+      "u_subsequentPulseAmplitude",
     ];
     this.mainGL.useProgram(this.programs.simulation);
     simUniforms.forEach((name) => {
@@ -395,7 +397,7 @@ export class RenderSystem {
     const sigma = Math.sqrt(kB * T) * scalingFactor;
 
     // Gaussian beam parameters
-    const w0 = this.config.initialBeamWidth;
+    const w0 = this.config.beamWidth;
     const z = 0;
     const lambda = 1;
     const k = (2 * Math.PI) / lambda;
@@ -405,62 +407,38 @@ export class RenderSystem {
     const centerY = Math.floor(this.config.gridSize / 2);
 
     // Initialize fundamental field
-    if (this.config.useSimplePulse) {
-      // Simple Gaussian pulse for fundamental
-      const beamWidth = this.config.initialBeamWidth;
-      for (let j = -beamWidth; j <= beamWidth; j++) {
-        for (let i = -beamWidth; i <= beamWidth; i++) {
-          const x = centerX + i;
-          const y = centerY + j;
-          if (
-            x >= 0 &&
-            x < this.config.gridSize &&
-            y >= 0 &&
-            y < this.config.gridSize
-          ) {
-            const idx = (y * this.config.gridSize + x) * 4;
-            const amp =
-              Math.exp(-(i * i + j * j) / 4) *
-              this.config.initialPulseAmplitude;
-            const phase = this.config.initialPulsePhaseShift;
-            fundamentalData[idx] = amp * Math.cos(phase);
-            fundamentalData[idx + 1] = amp * Math.sin(phase);
-          }
-        }
-      }
-    } else {
-      // Full Gaussian beam with phase terms for fundamental
-      for (let y = 0; y < this.config.gridSize; y++) {
-        for (let x = 0; x < this.config.gridSize; x++) {
-          const idx = (y * this.config.gridSize + x) * 4;
-          const dx = x - centerX;
-          const dy = y - centerY;
-          const r2 = dx * dx + dy * dy;
 
-          const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
-          const R = z === 0 ? Infinity : z * (1 + (zR / z) ** 2);
-          const gouyPhase = Math.atan(z / zR);
+    // Gaussian beam with phase terms for fundamental
+    for (let y = 0; y < this.config.gridSize; y++) {
+      for (let x = 0; x < this.config.gridSize; x++) {
+        const idx = (y * this.config.gridSize + x) * 4;
+        const dx = x - centerX;
+        const dy = y - centerY;
+        const r2 = dx * dx + dy * dy;
 
-          const phase =
-            -k * z -
-            (R === Infinity ? 0 : (k * r2) / (2 * R)) +
-            gouyPhase +
-            this.config.initialPulsePhaseShift;
+        const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
+        const R = z === 0 ? Infinity : z * (1 + (zR / z) ** 2);
+        const gouyPhase = Math.atan(z / zR);
 
-          const amplitude =
-            this.config.initialPulseAmplitude *
-            (w0 / w) *
-            Math.exp(-r2 / (w * w));
+        const phase =
+          -k * z -
+          (R === Infinity ? 0 : (k * r2) / (2 * R)) +
+          gouyPhase +
+          this.config.initialPulsePhaseShift;
 
-          // Add thermal noise to fundamental
-          const noiseAmp = sigma * this.gaussianRandom(prng);
-          const noisePhase = 2.0 * Math.PI * prng();
+        const amplitude =
+          this.config.initialPulseAmplitude *
+          (w0 / w) *
+          Math.exp(-r2 / (w * w));
 
-          fundamentalData[idx] =
-            amplitude * Math.cos(phase) + noiseAmp * Math.cos(noisePhase);
-          fundamentalData[idx + 1] =
-            amplitude * Math.sin(phase) + noiseAmp * Math.sin(noisePhase);
-        }
+        // Add thermal noise to fundamental
+        const noiseAmp = sigma * this.gaussianRandom(prng);
+        const noisePhase = 2.0 * Math.PI * prng();
+
+        fundamentalData[idx] =
+          amplitude * Math.cos(phase) + noiseAmp * Math.cos(noisePhase);
+        fundamentalData[idx + 1] =
+          amplitude * Math.sin(phase) + noiseAmp * Math.sin(noisePhase);
       }
     }
 
@@ -767,13 +745,18 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_boundaryAlpha, this.config.boundaryAlpha);
     gl.uniform1f(uniforms.u_boundaryM, this.config.boundaryM);
     gl.uniform1f(
-      uniforms.u_boundaryReflectivity,
-      this.config.boundaryReflectivity,
+      uniforms.u_boundaryTransitionWidth,
+      this.config.boundaryTransitionWidth,
     );
 
     // Timekeeping / update settings
     gl.uniform1i(uniforms.u_updateTarget, updateTarget);
     gl.uniform1i(uniforms.u_pulseInterval, this.config.pulseInterval);
+    gl.uniform1i(uniforms.u_beamWidth, this.config.beamWidth);
+    gl.uniform1i(
+      uniforms.u_subsequentPulseAmplitude,
+      this.config.subsequentPulseAmplitude,
+    );
     gl.uniform1i(uniforms.u_frameCount, this.frameCount + 1);
 
     // New uniforms for cross-Kerr or additional modeling

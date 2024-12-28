@@ -28,6 +28,9 @@ export const getSimulationShaderSource = (config) => {
   uniform float u_gainSat;
   uniform float u_linearLoss;
 
+  uniform float u_beamWidth;
+  uniform float u_subsequentPulseAmplitude;
+
   // Grid, time, boundary
   uniform float u_dt;
   uniform float u_dx;
@@ -46,7 +49,7 @@ export const getSimulationShaderSource = (config) => {
   uniform float u_boundaryR0;
   uniform float u_boundaryAlpha;
   uniform float u_boundaryM;
-  uniform float u_boundaryReflectivity;
+  uniform float u_boundaryTransitionWidth;
   uniform int   u_updateTarget;
   uniform int   u_frameCount;
   uniform int   u_pulseInterval;
@@ -144,8 +147,6 @@ export const getSimulationShaderSource = (config) => {
   }
 
   float boundaryDampingFactor(vec2 pos) {
-    float u_shellWidth = 2.;
-
       // 1) Get position relative to center in polar coordinates
       vec2 center = 0.5 * u_resolution;
       vec2 rel = pos - center;
@@ -162,15 +163,15 @@ export const getSimulationShaderSource = (config) => {
 
       // 4) Calculate distance past boundary
       float distPast = r - boundaryRadius;
-      if (distPast >= u_shellWidth) {
+      if (distPast >= u_boundaryTransitionWidth) {
           return 0.0;  // Far outside => complete damping
       }
 
       // 5) Smooth transition from 1.0 to 0.0
       // Optional: Could use smoother transition like cosine instead of linear
-      float t = distPast / u_shellWidth;
-      // return 1.0 - t;  // Linear falloff
-      return 0.5 * (1.0 + cos(PI * t));  // Cosine falloff (smoother)
+      float t = distPast / u_boundaryTransitionWidth;
+      return 1.0 - t;  // Linear falloff
+      // return 0.5 * (1.0 + cos(PI * t));  // Cosine falloff (smoother)
   }
 
   float fresnelReflectivity_TE(float n_in, float n_out, float theta_i) {
@@ -275,7 +276,6 @@ export const getSimulationShaderSource = (config) => {
       return props;
   }
 
-  // Helper to compute both TE and TM reflectivities
   struct FresnelCoeffs {
       float R_TE;
       float R_TM;
@@ -619,11 +619,11 @@ export const getSimulationShaderSource = (config) => {
 
       // 7) Optional pulse injection for fundamental
       if (isFundamental && u_pulseInterval > 0 && (u_frameCount % u_pulseInterval == 0)) {
-          float w0 = 4.0;
+          float w0 = u_beamWidth;
           vec2 centerGrid = 0.5 * u_resolution;
           vec2 rel = pos - centerGrid;
           float r2 = dot(rel, rel);
-          float amplitude = 0.01 * exp(-r2/(w0*w0));
+          float amplitude = u_subsequentPulseAmplitude * exp(-r2/(w0*w0));
           newField += amplitude * vec2(1.0, 0.0);  // Real pulse
       }
 
@@ -638,28 +638,46 @@ export const getSimulationShaderSource = (config) => {
   void main() {
       vec2 pos = gl_FragCoord.xy;
       vec2 texel = 1.0 / u_resolution;
-
-      // Get boundary damping factor
       float damp = boundaryDampingFactor(pos);
 
-      if (damp < 1.0) {
-          // We're in or beyond boundary region
-          vec4 boundaryResult = computeBoundaryField(pos, texel);
-
-          if (damp <= 0.0) {
-              // Fully outside
-              fragColor = boundaryResult;
-              return;
-          }
-
-          // In transition region - compute interior physics too and blend
-          vec4 interiorResult = computeInteriorField(pos, texel, u_updateTarget == 0);
-          fragColor = mix(boundaryResult, interiorResult, damp);
+      if (damp <= 0.0) {
+          // Fully outside - no field
+          fragColor = vec4(0.0);
           return;
       }
 
-      // Fully inside cavity
-      fragColor = computeInteriorField(pos, texel, u_updateTarget == 0);
+      // Always compute the wave equation update
+      vec4 fieldUpdate = computeInteriorField(pos, texel, u_updateTarget == 0);
+
+      // If we're in the transition region, apply partial reflection
+      if (damp < 1.0) {
+          BoundaryProps props = computeBoundaryProperties(pos, texel);
+
+          if (props.validField) {
+              FresnelCoeffs coeffs = computeFresnelCoefficients(props);
+
+              // Get current field
+              vec4 current = texture(u_current, pos * texel);
+
+              // Scale reflection by how "outside" we are
+              float outsideness = 1.0 - damp;
+
+              // Reflected part (increases with outsideness)
+              vec2 reflectedPart = current.xy * coeffs.R_avg * outsideness;
+
+              // Transmitted part (from PDE update, decreases with outsideness)
+              vec2 transmittedPart = fieldUpdate.xy * damp;
+
+              // Combine them
+              fieldUpdate = vec4(
+                  reflectedPart + transmittedPart,
+                  fieldUpdate.z,  // Keep phase match term
+                  fieldUpdate.w   // Keep nonlinearity term
+              );
+          }
+      }
+
+      fragColor = fieldUpdate;
   }
 `;
 };
