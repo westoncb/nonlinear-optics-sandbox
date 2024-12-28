@@ -110,6 +110,39 @@ export const getSimulationShaderSource = (config) => {
       return (r <= radius);
   }
 
+  vec2 boundaryNormal(vec2 pos) {
+      // Get position relative to center
+      vec2 center = 0.5 * u_resolution;
+      vec2 rel = pos - center;
+      float r = length(rel);
+
+      // Calculate theta and relevant trig terms
+      float theta = atan(rel.y, rel.x);
+      float cosTheta = cos(theta);
+      float sinTheta = sin(theta);
+      float cosMTheta = cos(u_boundaryM * theta);
+      float sinMTheta = sin(u_boundaryM * theta);
+
+      // For a polar curve r = R(θ), the normal vector is:
+      // N = (R(θ) - R'(θ))ȓ + R(θ)θ̂
+      // where ȓ = (cos θ, sin θ) and θ̂ = (-sin θ, cos θ)
+
+      // Base radius with modulation
+      float R = u_boundaryR0 * (1.0 + u_boundaryAlpha * cosMTheta);
+
+      // Derivative of R with respect to theta
+      float Rprime = -u_boundaryR0 * u_boundaryAlpha * u_boundaryM * sinMTheta;
+
+      // Construct normal vector components
+      vec2 rHat = vec2(cosTheta, sinTheta);
+      vec2 thetaHat = vec2(-sinTheta, cosTheta);
+
+      vec2 normal = (R - Rprime) * rHat + R * thetaHat;
+
+      // Normalize and return (pointing inward by convention)
+      return -normalize(normal);
+  }
+
   // A helper to do a simpler TE Fresnel reflectivity:
   float fresnelReflectivity_TE(float n_in, float n_out, float theta_i) {
       // Snell's law: n_in * sin(theta_i) = n_out * sin(theta_t)
@@ -130,40 +163,41 @@ export const getSimulationShaderSource = (config) => {
       return r * r;
   }
 
+  float fresnelReflectivity_TM(float n_in, float n_out, float theta_i) {
+      float sin_t = (n_in / n_out) * sin(theta_i);
+      sin_t = clamp(sin_t, -1.0, 1.0);
+      float theta_t = asin(sin_t);
+
+      float cos_i = cos(theta_i);
+      float cos_t = cos(theta_t);
+
+      float r_num = (n_out * cos_i) - (n_in * cos_t);
+      float r_den = (n_out * cos_i) + (n_in * cos_t);
+      float r     = r_num / r_den;
+      return r * r;
+  }
+
   float computeAngleDependentReflectivity(vec2 pos, vec2 texel) {
-      vec2 centerPos = 0.5 * u_resolution;
-      vec2 rel = pos - centerPos;
-      float r = length(rel);
+      vec2 centerVal = texture(u_current, pos * texel).xy;
 
-      // boundary normal (outward)
-      vec2 n_vec = normalize(rel);
+      // 1) If amplitude is too small, skip
+      if (dot(centerVal, centerVal) < 1e-9) return 0.0;
 
-      // get local wavevector from phase gradient
-      vec4 centerVal = texture(u_current, pos * texel);
-      vec2 kvec = calculatePhaseGradients(pos, texel, centerVal);
-      float kLen = length(kvec);
+      // 2) Get local wave-vector direction, etc.
+      vec2 kvec = calculatePhaseGradients(pos, texel, vec4(centerVal, 0.0, 0.0));
+      float cos_in = dot(normalize(kvec), boundaryNormal(pos)); // define a boundaryNormal(pos)
+      float theta_i = acos(clamp(cos_in, -1.0, 1.0));
 
-      // if kLen is near zero, wave is near node or uniform phase
-      if (kLen < 1e-6) return 0.0;
-
-      vec2 k_hat = kvec / kLen;
-
-      // angle of incidence = arccos(k_hat dot n_vec)
-      float cos_in = dot(k_hat, n_vec);
-      cos_in = clamp(cos_in, -1.0, 1.0);
-      float theta_i = acos(cos_in);
-      // handle outward-going waves
-      if (theta_i > PI/2.0) {
-          theta_i = PI - theta_i;
-      }
-
-      // get local index from lens.x
+      // 3) Local index inside vs. outside
       float n_local = max(texture(u_lens, pos * texel).x, 1e-6);
 
-      // compute TE Fresnel reflectivity
       float R_TE = fresnelReflectivity_TE(n_local, 1.0, theta_i);
+      float R_TM = fresnelReflectivity_TM(n_local, 1.0, theta_i);
 
-      return R_TE;
+      // 4) Weighted or averaged reflection
+      float R_avg = 0.5 * (R_TE + R_TM);
+
+      return R_avg;
   }
 
   /*----------------------------------------------------------
@@ -551,7 +585,7 @@ if (u_displayMode == 2) {  // Lens display
    float chi3Grad = length(vec2(dx.w, dy.w)) / max(lens.w, 1e-6);
 
    // Calculate color components
-   float hueBias = 0.4;    // Shifted slightly to bring out warmer colors
+   float hueBias = 0.4;
    float hueScale = 3.0;   // Increased spread for more color variation
    float hue = hueBias + (atan(chi3Grad, chi2Grad) / (2.0 * 3.14159)) * hueScale;
 
@@ -565,8 +599,8 @@ if (u_displayMode == 2) {  // Lens display
    val = mix(val, val * (1.0 - 0.2 * dispGrad), 0.2);  // 20% dispersion influence
 
    // Enhance local contrast
-   sat = pow(sat, 0.25);
-   val = pow(val, 0.6);
+   sat = pow(sat, 0.3);
+   val = pow(val, 0.7);
 
    fragColor = vec4(hsv2rgb(vec3(hue, sat, val)), 1.0);
 } else {  // Wave or SHG display
