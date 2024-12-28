@@ -1,5 +1,5 @@
 export const constants = {
-  GRID_SIZE: 256,
+  GRID_SIZE: 512,
   PREVIEW_SIZE: 200,
 };
 
@@ -7,13 +7,13 @@ export const constants = {
 const defaultConfigData = {
   // Core simulation parameters
   // Temporal step size for numerical integration of wave equation
-  dt: 0.1,
+  dt: 0.15,
   // Spatial grid spacing
   dx: 1,
   // Number of grid points in each dimension (square grid)
   gridSize: constants.GRID_SIZE,
   // Field amplitude preservation factor (1 = perfect preservation)
-  damping: 0.9999,
+  damping: 1,
   // Speed of light in simulation units
   c: 1,
   // Toggle between 5-point and 9-point Laplacian stencil
@@ -21,15 +21,15 @@ const defaultConfigData = {
 
   // Nonlinear optical parameters
   // Base strength of nonlinear optical effects
-  chi: 0.8,
+  chi: 0.18,
   // Relative strength of Kerr (χ(3)) nonlinearity
-  chi_ratio: -12,
+  chi_ratio: 2,
   // Relative strength of second-harmonic (χ(2)) nonlinearity
   chi2_ratio: 1.0,
   // Intensity at which SHG conversion begins to saturate
-  shg_Isat: 0.1,
+  shg_Isat: 0.01,
   // Intensity at which Kerr effect begins to saturate
-  kerr_Isat: 0.1,
+  kerr_Isat: 0.02,
 
   // Coupling parameters
   // Strength of Kerr-mediated interaction between fundamental and SHG fields
@@ -41,9 +41,9 @@ const defaultConfigData = {
   // Maximum small-signal gain coefficient
   gain0: 0.5,
   // Intensity at which gain medium begins to saturate
-  gainSat: 0.5,
+  gainSat: 0.25,
   // Rate of passive power loss in cavity
-  linearLoss: 0.001,
+  linearLoss: 0.01,
 
   // Wave properties
   // Wavelength of fundamental field in grid units
@@ -65,17 +65,17 @@ const defaultConfigData = {
 
   // Adaptive lens parameters
   // Radius of lens region in grid points
-  lensRadius: 48,
+  lensRadius: 64,
   // Number of phase wraps from center to edge of lens
-  fresnelZones: 32,
+  fresnelZones: 48,
   // Number of independently adjustable regions in lens
-  numSectors: 168,
+  numSectors: 128,
 
   // Optimization controls
   // Selected optimization algorithm
-  updateStrategy: "phaseMatchAsymmetric",
+  updateStrategy: "phaseMatch",
   // Step size for lens parameter updates
-  learningRate: 5e-7,
+  learningRate: 1e-7,
   // Update lens every N simulation steps
   optimizationInterval: 1,
   // Toggle lens optimization
@@ -85,13 +85,13 @@ const defaultConfigData = {
   // Number of steps between pulse injections (0 = single pulse)
   pulseInterval: 0,
   // Initial pulse peak amplitude
-  initialPulseAmplitude: 60,
+  initialPulseAmplitude: 2,
   // Initial pulse phase offset
   initialPulsePhaseShift: 0,
   // Toggle between simple and Gaussian pulse shapes
   useSimplePulse: false,
   // Amplitude of random fluctuations in initial field
-  initialNoiseScale: 0.001,
+  initialNoiseScale: 1e-4,
   // Initial pulse width in grid units
   initialBeamWidth: 4,
 };
