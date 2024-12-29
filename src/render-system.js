@@ -1,11 +1,10 @@
 import { LensOptimizer } from "./lens-optimizer.js";
 import { webgl, stats, scaleDataForDisplay } from "./util.js";
+import { vertexShaderSource, displayShaderSource } from "./shaders.js";
 import {
-  vertexShaderSource,
+  getInitialFieldState,
   getSimulationShaderSource,
-  displayShaderSource,
-} from "./shaders.js";
-import { polar } from "./util.js";
+} from "./simulation.js";
 
 const DisplayMode = {
   FUNDAMENTAL: 0,
@@ -359,105 +358,10 @@ export class RenderSystem {
     this.initializeFields();
   }
 
-  // Better PRNG implementation
-  mulberry32(seed) {
-    return function () {
-      let t = (seed += 0x6d2b79f5);
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  // Gaussian random number generator using Box-Muller
-  gaussianRandom(prng) {
-    const u1 = prng();
-    const u2 = prng();
-    const radius = Math.sqrt(-2.0 * Math.log(u1));
-    const theta = 2.0 * Math.PI * u2;
-    return radius * Math.cos(theta);
-  }
-
   initializeFields() {
-    const fundamentalData = new Float32Array(
-      this.config.gridSize * this.config.gridSize * 4,
+    const { fundamentalData, shgData, gainMaskData } = getInitialFieldState(
+      this.config,
     );
-    const shgData = new Float32Array(
-      this.config.gridSize * this.config.gridSize * 4,
-    );
-
-    // Initialize PRNG for thermal noise
-    const seed = Math.floor(Math.random() * 2 ** 32);
-    const prng = this.mulberry32(seed);
-
-    // Physical constants for thermal noise
-    const kB = 1.380649e-23;
-    const T = 295.15;
-    const scalingFactor = this.config.initialNoiseScale;
-    const sigma = Math.sqrt(kB * T) * scalingFactor;
-
-    // Gaussian beam parameters
-    const w0 = this.config.beamWidth;
-    const z = 0;
-    const lambda = 1;
-    const k = (2 * Math.PI) / lambda;
-    const zR = (Math.PI * w0 * w0) / lambda;
-
-    const centerX = Math.floor(this.config.gridSize / 2);
-    const centerY = Math.floor(this.config.gridSize / 2);
-
-    // Initialize fundamental field
-
-    // Gaussian beam with phase terms for fundamental
-    for (let y = 0; y < this.config.gridSize; y++) {
-      for (let x = 0; x < this.config.gridSize; x++) {
-        const idx = (y * this.config.gridSize + x) * 4;
-        const dx = x - centerX;
-        const dy = y - centerY;
-        const r2 = dx * dx + dy * dy;
-
-        const w = w0 * Math.sqrt(1 + (z / zR) ** 2);
-        const R = z === 0 ? Infinity : z * (1 + (zR / z) ** 2);
-        const gouyPhase = Math.atan(z / zR);
-
-        const phase =
-          -k * z -
-          (R === Infinity ? 0 : (k * r2) / (2 * R)) +
-          gouyPhase +
-          this.config.initialPulsePhaseShift;
-
-        const amplitude =
-          this.config.initialPulseAmplitude *
-          (w0 / w) *
-          Math.exp(-r2 / (w * w));
-
-        // Add thermal noise to fundamental
-        const noiseAmp = sigma * this.gaussianRandom(prng);
-        const noisePhase = 2.0 * Math.PI * prng();
-
-        fundamentalData[idx] =
-          amplitude * Math.cos(phase) + noiseAmp * Math.cos(noisePhase);
-        fundamentalData[idx + 1] =
-          amplitude * Math.sin(phase) + noiseAmp * Math.sin(noisePhase);
-      }
-    }
-
-    // Initialize SHG field with very small noise only
-    const shgNoiseFactor = 0.01; // Much smaller noise for SHG
-    for (let y = 0; y < this.config.gridSize; y++) {
-      for (let x = 0; x < this.config.gridSize; x++) {
-        const idx = (y * this.config.gridSize + x) * 4;
-        const noiseAmp = sigma * shgNoiseFactor * this.gaussianRandom(prng);
-        const noisePhase = 2.0 * Math.PI * prng();
-        shgData[idx] = noiseAmp * Math.cos(noisePhase);
-        shgData[idx + 1] = noiseAmp * Math.sin(noisePhase);
-        // Initialize extra channels to zero
-        shgData[idx + 2] = 0;
-        shgData[idx + 3] = 0;
-        fundamentalData[idx + 2] = 0;
-        fundamentalData[idx + 3] = 0;
-      }
-    }
 
     // Upload fundamental field textures
     this.fundamentalTextures.forEach((texture) => {
@@ -491,18 +395,6 @@ export class RenderSystem {
       );
     });
 
-    // Initialize gain mask
-    const gainMaskData = this.createGainMaskData(this.config);
-    const rgbaData = new Float32Array(
-      this.config.gridSize * this.config.gridSize * 4,
-    );
-    for (let i = 0; i < gainMaskData.length; i++) {
-      rgbaData[i * 4] = gainMaskData[i]; // R channel
-      rgbaData[i * 4 + 1] = 0; // G channel
-      rgbaData[i * 4 + 2] = 0; // B channel
-      rgbaData[i * 4 + 3] = 1; // A channel
-    }
-
     this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, this.gainMaskTex);
     this.mainGL.texImage2D(
       this.mainGL.TEXTURE_2D,
@@ -513,59 +405,8 @@ export class RenderSystem {
       0,
       this.mainGL.RGBA,
       this.mainGL.FLOAT,
-      rgbaData,
+      gainMaskData,
     );
-  }
-
-  createGainMaskData(config) {
-    const gridSize = config.gridSize;
-    const gainMaskData = new Float32Array(gridSize * gridSize);
-    const centerX = Math.floor(gridSize / 2);
-    const centerY = Math.floor(gridSize / 2);
-
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < gridSize; x++) {
-        const coords = polar.getZoneAndSector(
-          x,
-          y,
-          centerX,
-          centerY,
-          config.lensRadius,
-          config.fresnelZones,
-          config.numSectors,
-        );
-
-        if (coords) {
-          // Inside the lens disk - we have several options for gain patterning:
-
-          // Option 1: Uniform gain across entire lens disk
-          // gainMaskData[y * gridSize + x] = 1.0;
-
-          // Option 2: Alternating zones (uncomment to use)
-          // gainMaskData[y * gridSize + x] = coords.zone % 2 ? 1.0 : 0.0;
-
-          // Option 3: Radial gradient (stronger at center)
-          const normalizedRadius = coords.zone / config.fresnelZones;
-          gainMaskData[y * gridSize + x] = 1.0 - normalizedRadius;
-
-          // Option 4: Sectoral pattern (uncomment to use)
-          // gainMaskData[y * gridSize + x] = coords.sector % 2 ? 1.0 : 0.0;
-
-          // Option 5: Checkerboard of zones and sectors (uncomment to use)
-          // gainMaskData[y * gridSize + x] =
-          //   (coords.zone + coords.sector) % 2 ? 1.0 : 0.0;
-
-          // Option 7: Central hot spot with sharp falloff
-          // const normalizedRadius = coords.zone / config.fresnelZones;
-          // gainMaskData[y * gridSize + x] = normalizedRadius < 0.2 ? 3.0 : 0.0;
-        } else {
-          // Outside the lens disk - no gain
-          gainMaskData[y * gridSize + x] = 0.0;
-        }
-      }
-    }
-
-    return gainMaskData;
   }
 
   readFieldData(texture) {

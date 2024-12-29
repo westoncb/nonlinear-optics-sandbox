@@ -128,6 +128,24 @@ export const polar = {
   },
 };
 
+export const mulberry32 = (seed) => {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+// Gaussian random number generator using Box-Muller
+export const gaussianRandom = (prng) => {
+  const u1 = prng();
+  const u2 = prng();
+  const radius = Math.sqrt(-2.0 * Math.log(u1));
+  const theta = 2.0 * Math.PI * u2;
+  return radius * Math.cos(theta);
+};
+
 export const scaleDataForDisplay = (
   sourceData,
   sourceSize,
