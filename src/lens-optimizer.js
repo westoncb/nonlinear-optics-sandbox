@@ -201,44 +201,48 @@ export class LensOptimizer {
           // (Should already exist as an object in lensModes[z][s])
           const lensParams = this.lensModes[z][s];
 
-          // The user-supplied strategy returns { update: { baseIndex, dispersion, chi2, chi3 }, loss: number }
-          const { update, loss } = updateStrategy(
+          const { gradients, loss } = updateStrategy(
             fund,
             shg,
             count,
             z,
             s,
             lensParams,
+            this.config,
           );
 
           // 1) Accumulate ADAM moments
           this.adamState.m_baseIndex[z][s] =
             this.adamState.beta1 * this.adamState.m_baseIndex[z][s] +
-            (1 - this.adamState.beta1) * update.baseIndex;
+            (1 - this.adamState.beta1) * gradients.baseIndex;
           this.adamState.v_baseIndex[z][s] =
             this.adamState.beta2 * this.adamState.v_baseIndex[z][s] +
-            (1 - this.adamState.beta2) * update.baseIndex * update.baseIndex;
+            (1 - this.adamState.beta2) *
+              gradients.baseIndex *
+              gradients.baseIndex;
 
           this.adamState.m_dispersion[z][s] =
             this.adamState.beta1 * this.adamState.m_dispersion[z][s] +
-            (1 - this.adamState.beta1) * update.dispersion;
+            (1 - this.adamState.beta1) * gradients.dispersion;
           this.adamState.v_dispersion[z][s] =
             this.adamState.beta2 * this.adamState.v_dispersion[z][s] +
-            (1 - this.adamState.beta2) * update.dispersion * update.dispersion;
+            (1 - this.adamState.beta2) *
+              gradients.dispersion *
+              gradients.dispersion;
 
           this.adamState.m_chi2[z][s] =
             this.adamState.beta1 * this.adamState.m_chi2[z][s] +
-            (1 - this.adamState.beta1) * update.chi2;
+            (1 - this.adamState.beta1) * gradients.chi2;
           this.adamState.v_chi2[z][s] =
             this.adamState.beta2 * this.adamState.v_chi2[z][s] +
-            (1 - this.adamState.beta2) * update.chi2 * update.chi2;
+            (1 - this.adamState.beta2) * gradients.chi2 * gradients.chi2;
 
           this.adamState.m_chi3[z][s] =
             this.adamState.beta1 * this.adamState.m_chi3[z][s] +
-            (1 - this.adamState.beta1) * update.chi3;
+            (1 - this.adamState.beta1) * gradients.chi3;
           this.adamState.v_chi3[z][s] =
             this.adamState.beta2 * this.adamState.v_chi3[z][s] +
-            (1 - this.adamState.beta2) * update.chi3 * update.chi3;
+            (1 - this.adamState.beta2) * gradients.chi3 * gradients.chi3;
 
           // 2) Compute bias-corrected
           const mBase_hat = this.adamState.m_baseIndex[z][s] * bc1;

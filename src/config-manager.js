@@ -7,7 +7,7 @@ export const constants = {
 const defaultConfigData = {
   // Core simulation parameters
   // Temporal step size for numerical integration of wave equation
-  dt: 0.25,
+  dt: 0.2,
   // Spatial grid spacing
   dx: 1,
   // Number of grid points in each dimension (square grid)
@@ -21,15 +21,15 @@ const defaultConfigData = {
 
   // Nonlinear optical parameters
   // Base strength of nonlinear optical effects
-  chi: 0.18,
+  chi: 0.8,
   // Relative strength of Kerr (χ(3)) nonlinearity
-  chi_ratio: 2,
+  chi_ratio: -12,
   // Relative strength of second-harmonic (χ(2)) nonlinearity
   chi2_ratio: 1.0,
   // Intensity at which SHG conversion begins to saturate
-  shg_Isat: 0.01,
+  shg_Isat: 0.02,
   // Intensity at which Kerr effect begins to saturate
-  kerr_Isat: 0.02,
+  kerr_Isat: 0.03,
 
   // Coupling parameters
   // Strength of Kerr-mediated interaction between fundamental and SHG fields
@@ -39,11 +39,11 @@ const defaultConfigData = {
 
   // Gain and loss parameters
   // Maximum small-signal gain coefficient
-  gain0: 0.5,
+  gain0: 1,
   // Intensity at which gain medium begins to saturate
   gainSat: 0.25,
   // Rate of passive power loss in cavity
-  linearLoss: 0.01,
+  linearLoss: 0.0,
 
   // Wave properties
   // Wavelength of fundamental field in grid units
@@ -61,39 +61,39 @@ const defaultConfigData = {
   // Width of border region in grid points
   margin: 10,
   // Width of smooth transition region at boundary (in grid points)
-  boundaryTransitionWidth: 2,
+  boundaryTransitionWidth: 20,
 
   // Adaptive lens parameters
   // Radius of lens region in grid points
   lensRadius: 64,
   // Number of phase wraps from center to edge of lens
-  fresnelZones: 48,
+  fresnelZones: 64,
   // Number of independently adjustable regions in lens
-  numSectors: 128,
+  numSectors: 200,
 
   // Optimization controls
   // Selected optimization algorithm
-  updateStrategy: "phaseMatchAsymmetric",
+  updateStrategy: "SHGTest",
   // Step size for lens parameter updates
-  learningRate: 1e-7,
+  learningRate: 1e-8,
   // Update lens every N simulation steps
   optimizationInterval: 1,
   // Toggle lens optimization
   disableAdaptation: false,
 
   // Number of steps between pulse injections (0 = single pulse)
-  pulseInterval: 100,
+  pulseInterval: 0,
   // Peak amplitude of all pulses after initial
   subsequentPulseAmplitude: 0.1,
   // Beam waist/width for a Gaussian pulse in grid units
-  beamWidth: 42,
+  beamWidth: 4,
 
   // Initial pulse peak amplitude
-  initialPulseAmplitude: 2,
+  initialPulseAmplitude: 20,
   // Initial pulse phase offset
   initialPulsePhaseShift: 0,
   // Amplitude of random fluctuations in initial field
-  initialNoiseScale: 1e-6,
+  initialNoiseScale: 1e-8,
 };
 
 export const referenceConfig = {
