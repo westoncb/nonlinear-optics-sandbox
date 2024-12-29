@@ -752,8 +752,8 @@ export class RenderSystem {
     // Timekeeping / update settings
     gl.uniform1i(uniforms.u_updateTarget, updateTarget);
     gl.uniform1i(uniforms.u_pulseInterval, this.config.pulseInterval);
-    gl.uniform1i(uniforms.u_beamWidth, this.config.beamWidth);
-    gl.uniform1i(
+    gl.uniform1f(uniforms.u_beamWidth, this.config.beamWidth);
+    gl.uniform1f(
       uniforms.u_subsequentPulseAmplitude,
       this.config.subsequentPulseAmplitude,
     );
