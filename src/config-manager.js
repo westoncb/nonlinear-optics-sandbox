@@ -7,7 +7,7 @@ export const constants = {
 const defaultConfigData = {
   // Core simulation parameters
   // Temporal step size for numerical integration of wave equation
-  dt: 0.2,
+  dt: 0.4,
   // Spatial grid spacing
   dx: 1,
   // Number of grid points in each dimension (square grid)

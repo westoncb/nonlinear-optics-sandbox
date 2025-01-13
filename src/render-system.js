@@ -590,7 +590,6 @@ export class RenderSystem {
       this.config.boundaryTransitionWidth,
     );
 
-    // Timekeeping / update settings
     gl.uniform1i(uniforms.u_updateTarget, updateTarget);
     gl.uniform1i(uniforms.u_pulseInterval, this.config.pulseInterval);
     gl.uniform1f(uniforms.u_beamWidth, this.config.beamWidth);
@@ -600,7 +599,6 @@ export class RenderSystem {
     );
     gl.uniform1i(uniforms.u_frameCount, this.frameCount + 1);
 
-    // New uniforms for cross-Kerr or additional modeling
     gl.uniform1f(uniforms.u_lambdaFund, this.config.lambdaFund || 40.0);
     gl.uniform1f(uniforms.u_lambdaSHG, this.config.lambdaSHG || 20.0);
     gl.uniform1f(uniforms.u_phaseRef, this.config.phaseRef || 0.0);

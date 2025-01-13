@@ -783,28 +783,9 @@ function createGainMaskData(config) {
       );
 
       if (coords) {
-        // Inside the lens disk - we have several options for gain patterning:
-
-        // Option 1: Uniform gain across entire lens disk
-        // gainMaskData[y * gridSize + x] = 1.0;
-
-        // Option 2: Alternating zones (uncomment to use)
-        // gainMaskData[y * gridSize + x] = coords.zone % 2 ? 1.0 : 0.0;
-
-        // Option 3: Radial gradient (stronger at center)
+        // Radial gradient (stronger at center)
         const normalizedRadius = coords.zone / config.fresnelZones;
         gainMaskData[y * gridSize + x] = 1.0 - normalizedRadius;
-
-        // Option 4: Sectoral pattern (uncomment to use)
-        // gainMaskData[y * gridSize + x] = coords.sector % 2 ? 1.0 : 0.0;
-
-        // Option 5: Checkerboard of zones and sectors (uncomment to use)
-        // gainMaskData[y * gridSize + x] =
-        //   (coords.zone + coords.sector) % 2 ? 1.0 : 0.0;
-
-        // Option 7: Central hot spot with sharp falloff
-        // const normalizedRadius = coords.zone / config.fresnelZones;
-        // gainMaskData[y * gridSize + x] = normalizedRadius < 0.2 ? 3.0 : 0.0;
       } else {
         // Outside the lens disk - no gain
         gainMaskData[y * gridSize + x] = 0.0;

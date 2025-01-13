@@ -268,11 +268,6 @@ export class LensOptimizer {
           lensParams.chi3 +=
             (lr * mChi3_hat) / (Math.sqrt(vChi3_hat) + this.adamState.epsilon);
 
-          // OPTIONAL: clamp parameters if desired
-          // lensParams.baseIndex = Math.max(1.0, lensParams.baseIndex);
-          // lensParams.dispersion = ...
-          // etc.
-
           totalLoss += loss;
           countUpdates++;
         }
@@ -287,10 +282,6 @@ export class LensOptimizer {
         metric: avgLoss,
       });
     }
-
-    // Because lensParams were updated in-place, this.lensModes is already changed.
-    // We still return it for convenience, but you do not strictly need to reassign it.
-    return this.lensModes;
   }
 
   /**
@@ -326,8 +317,6 @@ export class LensOptimizer {
           data[idx + 1] = mode.dispersion;
           data[idx + 2] = mode.chi2;
           data[idx + 3] = mode.chi3;
-
-          //console.log(mode.baseIndex, mode.dispersion, mode.chi2, mode.chi3);
         } else {
           // Outside lens radius => e.g. vacuum or zero
           data[idx + 0] = 1.0; // baseline

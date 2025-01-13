@@ -89,10 +89,6 @@ export const App = () => {
     return Math.min(containerHeight, window.innerWidth);
   };
 
-  const handlePrimaryCanvasClick = () => {
-    setIsFullscreen(true);
-  };
-
   const handlePreviewClick = (clickedPreviewNum) => {
     if (!renderSystemRef.current) return;
 
