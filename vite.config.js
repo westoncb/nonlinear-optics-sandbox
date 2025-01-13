@@ -10,4 +10,5 @@ export default defineConfig({
     sourcemap: true,
   },
   plugins: [react()],
+  base: "/nonlinear-optics-sandbox/",
 });
