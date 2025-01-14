@@ -19,8 +19,8 @@ Visit the live demo: https://westoncb.github.io/nonlinear-optics-sandbox/
 
 This project implements a time-domain solver for the slowly-varying envelopes of optical fields, running entirely in WebGL. It simulates interactions between fundamental and second-harmonic fields in a configurable optical cavity, with features like:
 
-- Coupled nonlinear wave equations with saturable Kerr ($\chi^{(3)}$) effect and second-harmonic generation
-- Phase-matched frequency conversion via $\chi^{(2)}$ nonlinearity
+- Coupled nonlinear wave equations with saturable Kerr \\( \chi^{(3)} \\) effect and second-harmonic generation
+- Phase-matched frequency conversion via \\( \chi^{(2)} \\) nonlinearity
 - Fresnel reflection at modulated cavity boundaries
 - Saturable gain and adjustable damping for cavity effects
 
@@ -39,14 +39,14 @@ This simulator evolves two envelope fields (fundamental and SHG) via a leapfrog-
 #### Field Initialization
 
 - **Two RGBA textures** are allocated:
-  - One stores the fundamental field in $[\mathrm{Re},\mathrm{Im},\_\_,\_\_]$.
-  - One stores the SHG field, similarly in $[\mathrm{Re},\mathrm{Im},\_\_,\_\_]$.
+  - One stores the fundamental field in \\([\mathrm{Re},\,\mathrm{Im},\,\textunderscore,\,\textunderscore]\\).
+  - One stores the SHG field, similarly in \\([\mathrm{Re},\,\mathrm{Im},\,\textunderscore,\,\textunderscore]\\).
 - The fundamental field typically starts as a **Gaussian beam** plus random thermal noise, while the SHG field starts near zero but also includes a small noisy “seed.”
 - A **user-defined gain mask** can be applied to simulate an active medium, with saturable gain and linear loss modulated per pixel.
 
 #### Spatial Derivatives
 
-- A **9-point** Laplacian is used to approximate $ \nabla^2 E $.
+- A **9-point** Laplacian is used to approximate \\( \nabla^2 E \\).
   - The 9-point stencil is fourth-order accurate and reduces numerical dispersion.
 
 #### Local Refractive Index & Nonlinearities
@@ -54,23 +54,22 @@ This simulator evolves two envelope fields (fundamental and SHG) via a leapfrog-
 - Each pixel corresponds to an entry in a “lens” texture, which provides:
   - **Base refractive index** (potentially angle-dependent for birefringent regions)
   - **Dispersion coefficients** that shift the local index with wavelength
-  - **$\chi^{(2)}$ (second-harmonic)** and **$\chi^{(3)}$ (Kerr)** nonlinearity strengths
-- **Kerr effects**: The effective index is increased by $\chi^{(3)} I$, with saturation factors and cross-Kerr coupling between fundamental and SHG fields.
-- **Birefringence & Phase-Matching**: Angle-dependent $n_o/n_e$ can be used, and a local phase mismatch $\Delta k$ is computed to capture how well fundamental and SHG wave vectors align.
+  - **\\(\chi^{(2)}\\) (second-harmonic)** and **\\(\chi^{(3)}\\) (Kerr)** nonlinearity strengths
+- **Kerr effects**: The effective index is increased by \\( \chi^{(3)} I \\), with saturation factors and cross-Kerr coupling between fundamental and SHG fields.
+- **Birefringence & Phase-Matching**: Angle-dependent \\( n*{o}/n*{e} \\) can be used, and a local phase mismatch \\( \Delta k \\) is computed to capture how well fundamental and SHG wave vectors align.
 
 #### Second-Harmonic Generation (SHG)
 
 - **Up-conversion** from fundamental to SHG and **down-conversion** from SHG to fundamental occur simultaneously, with saturable conversion coefficients that limit exponential growth.
-- The local **phase mismatch** factor $\Delta k$ (computed from local indices and geometry) enforces or impedes conversion efficiency.
+- The local **phase mismatch** factor \\( \Delta k \\) (computed from local indices and geometry) enforces or impedes conversion efficiency.
 
 #### Time Integration & Gain
 
 - We use a **leapfrog-like** time stepping:
 
-  $$
-  E^{n+1} \;=\; 2E^n \;-\; E^{n-1}
-  \;+\;\Bigl[\text{laplacian} + \text{nonlinear terms} + \text{gain}\Bigr]\;\Delta t^2
-  $$
+  \\[
+  E^{n+1} = 2\,E^{n} \;-\; E^{n-1} + \Bigl[\text{laplacian} + \text{nonlinear terms} + \text{gain}\Bigr]\;\Delta t^2
+  \\]
 
 - Each pixel experiences **saturable gain** (and linear loss) according to the local gain mask, preventing unbounded amplification.
 
@@ -89,7 +88,7 @@ This simulator evolves two envelope fields (fundamental and SHG) via a leapfrog-
 
 _Location: `lens-optimizer.js`, `update-strategies.js`_
 
-This component adjusts the spatial distribution of lens parameters (base index, dispersion, $\chi^{(2)}$, $\chi^{(3)}$) to optimize nonlinear processes. It works by:
+This component adjusts the spatial distribution of lens parameters (base index, dispersion, \\(\chi^{(2)}\\), \\(\chi^{(3)}\\)) to optimize nonlinear processes. It works by:
 
 1. **Accumulating Field Data**
    After each simulation step, the fundamental and SHG field arrays (stored in RGBA textures) are read back. By examining each pixel’s real and imaginary values—and auxiliary metrics placed in extra channels—the optimizer aggregates data into **radial zones** and **angular sectors**. This matches the polar “lens” discretization used in the simulation.
@@ -97,10 +96,10 @@ This component adjusts the spatial distribution of lens parameters (base index, 
 2. **Computing Metrics & Gradients**
 
    - A variety of metrics (e.g., amplitude, phase gradients, phase mismatch) are summed for each zone/sector.
-   - A chosen “update strategy” (in `update-strategies.js`) computes partial derivatives (gradients) w.r.t. the lens parameters (`baseIndex`, `dispersion`, $\chi^{(2)}$, $\chi^{(3)}$) based on a target objective (e.g., maximizing SHG output or improving phase matching).
+   - A chosen “update strategy” (in `update-strategies.js`) computes partial derivatives (gradients) w.r.t. the lens parameters (`baseIndex`, `dispersion`, \\(\chi^{(2)}\\), \\(\chi^{(3)}\\)) based on a target objective (e.g., maximizing SHG output or improving phase matching).
 
 3. **Applying ADAM Optimizer**
-   - The lens parameters are updated using the popular **ADAM** method with bias-corrected first and second moments, a configurable learning rate, and an $\epsilon$ parameter for numerical stability.
+   - The lens parameters are updated using the popular **ADAM** method with bias-corrected first and second moments, a configurable learning rate, and an \\(\epsilon\\) parameter for numerical stability.
    - Each iteration logs a “loss” metric, stored in a `progressHistory` array for live plotting or further analysis.
 
 The snippet below illustrates the typical process:
