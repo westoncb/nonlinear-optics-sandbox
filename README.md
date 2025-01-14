@@ -2,7 +2,7 @@
 
 A browser-based sandbox for nonlinear optics experimentation featuring real-time visualization of optical field dynamics influenced by a lens-like structure at the center of a cavity boundary within which the simulation takes place. The app combines a GPU-based wave equation solver (using the slowly-varying envelope approximation) with gradient-based optimization. Through this, users can explore how an adapting lens/metasurface-like structure affects the nonlinear dynamics of coupled fields.
 
-![Application interface showing real-time visualization of optical fields and optimization](docs/images/screenshot.png)
+<img src="docs/images/screenshot.png" width="600" alt="Application interface showing real-time visualization of optical fields and optimization">
 
 ## Table of Contents
 
