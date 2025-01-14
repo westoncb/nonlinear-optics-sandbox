@@ -1,6 +1,24 @@
 # Nonlinear Optics Sandbox
 
-A GPU-accelerated nonlinear wave equation simulator (under the slowly-varying envelope approximation) that runs in the browser, featuring coupled wave propagation, real-time visualization, and gradient-based optimization of optical elements.
+A browser-based sandbox for nonlinear optics experimentation featuring real-time visualization of optical field dynamics influenced by a lens-like structure at the center of a cavity boundary within which the simulation takes place. The app combines a GPU-based wave equation solver (using the slowly-varying envelope approximation) with gradient-based optimization. Through this, users can explore how an adapting lens/metasurface-like structure affects the nonlinear dynamics of coupled fields.
+
+![Application interface showing real-time visualization of optical fields and optimization](docs/images/screenshot.png)
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Project Overview](#project-overview)
+- [Key Components](#key-components)
+  - [Nonlinear Wave Simulator](#nonlinear-wave-simulator)
+    - [Field Initialization](#field-initialization)
+    - [Spatial Derivatives](#spatial-derivatives)
+    - [Local Refractive Index & Nonlinearities](#local-refractive-index--nonlinearities)
+    - [Second-Harmonic Generation (SHG)](#second-harmonic-generation-shg)
+    - [Time Integration & Gain](#time-integration--gain)
+    - [Boundary Damping & Fresnel Reflection](#boundary-damping--fresnel-reflection)
+    - [Pulse Injection](#pulse-injection)
+  - [Adaptive Lens Optimization](#adaptive-lens-optimization)
+  - [Configuration & UI](#configuration--ui)
 
 ## Quick Start
 
@@ -17,14 +35,7 @@ Visit the live demo: https://westoncb.github.io/nonlinear-optics-sandbox/
 
 ## Project Overview
 
-This project implements a time-domain solver for the slowly-varying envelopes of optical fields, running entirely in WebGL. It simulates interactions between fundamental and second-harmonic fields in a configurable optical cavity, with features like:
-
-- Coupled nonlinear wave equations with saturable Kerr $\chi^{(3)}$ effect and second-harmonic generation
-- Phase-matched frequency conversion via $\chi^{(2)}$ nonlinearity
-- Fresnel reflection at modulated cavity boundaries
-- Saturable gain and adjustable damping for cavity effects
-
-While the numerical update scheme resembles finite-difference time-domain (FDTD) in its leapfrog stepping, this implementation focuses on the envelope of the optical field rather than solving full Maxwell's equations. Each pixel in the WebGL textures tracks both real and imaginary components of the fundamental and SHG fields, allowing us to capture amplitude and phase dynamics in real time.
+The goal of the project has been to get an intuitive high-level sense of how nonlinear optical fields evolve in the context of an optimization process which attempts to control their characteristics in various ways. The simulation attempts to be as detailed as possible while remaining real-time; it has been designed to capture a wide breadth of nonlinear effects in attempt to give a holistic view (vs. specialized). The interface provides three synchronized views: the two evolving optical fields and the spatial distribution of optical properties within the lens (refractive index, nonlinearities, etc.) which updates in real time as the ADAM optimizer explores the parameter space. The "lens" rendering only gives an overview of its structure and would need to be augmented with more specialized displays of its various properties for finer analysis. The choice to include SHG as a second field is somewhat arbitrary, and a four-wave mixing setup might be a more interesting future direction.
 
 ---
 
@@ -46,17 +57,22 @@ This simulator evolves two envelope fields (fundamental and SHG) via a leapfrog-
 
 #### Spatial Derivatives
 
-- A **9-point** Laplacian is used to approximate $\nabla^2 E$
-  - The 9-point stencil is fourth-order accurate and reduces numerical dispersion.
+- A fourth-order accurate **9-point** Laplacian is used to approximate $\nabla^2 E$
 
 #### Local Refractive Index & Nonlinearities
 
 - Each pixel corresponds to an entry in a "lens" texture, which provides:
-  - **Base refractive index** (potentially angle-dependent for birefringent regions)
+  - **Base refractive index** with support for angle-dependent indices in birefringent regions
   - **Dispersion coefficients** that shift the local index with wavelength
   - **$\chi^{(2)}$ (second-harmonic)** and **$\chi^{(3)}$ (Kerr)** nonlinearity strengths
-- **Kerr effects**: The effective index is increased by $\chi^{(3)} I$, with saturation factors and cross-Kerr coupling between fundamental and SHG fields.
-- **Birefringence & Phase-Matching**: Angle-dependent $n_o/n_e$ can be used, and a local phase mismatch $\Delta k$ is computed to capture how well fundamental and SHG wave vectors align.
+- **Kerr effects**: The effective index includes multiple contributions:
+  - Self-phase modulation via $\chi^{(3)} I$ with saturation
+  - Cross-Kerr coupling between fundamental and SHG fields
+  - Both effects include saturation to prevent unphysical index changes
+- **Birefringence & Phase-Matching**:
+  - Full angle-dependent $n_o/n_e$ calculations for arbitrary crystal orientations
+  - Automatic calculation of local phase mismatch $\Delta k$ based on geometry and material properties
+  - Support for temperature-dependent phase matching (through index temperature coefficients)
 
 #### Second-Harmonic Generation (SHG)
 
@@ -75,8 +91,13 @@ $$
 
 #### Boundary Damping & Fresnel Reflection
 
-- A **smooth damping region** outside a user-defined boundary radius helps avoid spurious reflections from the domain edge.
-- At the boundary, **Fresnel reflection** is computed (averaging TE/TM). The reflection amplitude increases as the wave extends further into the damping region, partially reflecting back into the cavity.
+- The cavity boundary supports arbitrary shapes through a modulated radius: $R(\theta) = R_0(1 + \alpha\cos(m\theta))$
+- A **smooth damping region** outside the modulated boundary helps avoid spurious reflections
+- **Fresnel reflection** is computed with:
+  - Separate TE/TM polarization handling
+  - Angle-dependent reflection coefficients
+  - Gradual transition region to avoid discontinuities
+  - Proper handling of total internal reflection conditions
 
 #### Pulse Injection
 
@@ -100,20 +121,6 @@ This component adjusts the spatial distribution of lens parameters (base index, 
 
 3. **Applying ADAM Optimizer**
    - The lens parameters are updated using the popular **ADAM** method with bias-corrected first and second moments, a configurable learning rate, and an $\epsilon$ parameter for numerical stability.
-   - Each iteration logs a "loss" metric, stored in a `progressHistory` array for live plotting or further analysis.
-
-The snippet below illustrates the typical process:
-
-```js
-updateLens(fundamentalData, shgData, width, height) {
-  // 1) Accumulate wave data in radial slices
-  // 2) Collect key metrics (phaseGradMag, kerrStrength, phaseMatch, etc.)
-  // 3) Call a chosen updateStrategy(...) to compute gradients
-  // 4) Use ADAM to apply lens parameter updates
-}
-```
-
-This approach allows you to shape an "adaptive lens" or "metasurface" that optimizes phase matching, conversion efficiency, or other custom objectives in real time.
 
 ---
 
@@ -128,4 +135,4 @@ Provides:
 - Visualization of field amplitudes, phases, and lens structure
 - Progress monitoring of optimization metrics
 
-The UI supports expanding any visualization to full-screen, offers real-time feedback on the optimization process, and allows tuning of physical and numerical parameters (e.g., boundary shape, lens nonlinearity, gain).
+The UI supports expanding any visualization to full-screen, offers real-time feedback on the optimization process, and allows tuning of simulation parameters (e.g., boundary shape, lens nonlinearity, gain) through the config editor.
