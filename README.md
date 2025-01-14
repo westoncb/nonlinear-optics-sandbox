@@ -50,8 +50,8 @@ This simulator evolves two envelope fields (fundamental and SHG) via a leapfrog-
 #### Field Initialization
 
 - **Two RGBA textures** are allocated:
-  - One stores the fundamental field in $[\mathrm{Re},\,\mathrm{Im},\,\textunderscore,\,\textunderscore]$
-  - One stores the SHG field, similarly in $[\mathrm{Re},\,\mathrm{Im},\,\textunderscore,\,\textunderscore]$
+  - One stores the fundamental field as [Re, Im, phase match, δn]
+  - One stores the SHG field in the same format, where Re/Im are the complex field components and δn is the nonlinear index change
 - The fundamental field typically starts as a **Gaussian beam** plus random thermal noise, while the SHG field starts near zero but also includes a small noisy "seed."
 - A **user-defined gain mask** can be applied to simulate an active medium, with saturable gain and linear loss modulated per pixel.
 
