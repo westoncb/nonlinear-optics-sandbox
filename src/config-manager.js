@@ -251,10 +251,10 @@ const cellularConfigData = {
   numSectors: 200,
 
   // Optimization parameters
-  updateStrategy: "phaseMatch",
+  updateStrategy: "phaseMatchAsymmetric",
   learningRate: 1e-8,
   optimizationInterval: 1,
-  disableAdaptation: false,
+  disableAdaptation: true,
 
   // Pulse parameters for sustained dynamics
   pulseInterval: 20, // Very frequent pulses
@@ -318,8 +318,8 @@ export const updateDerivedValues = (fullConfig) => {
 };
 
 export const canonicalConfigs = [
-  cellularConfig,
   referenceConfig,
+  cellularConfig,
   focusingConfig,
   fluidLikeNonlinearConfig,
 ].map(updateDerivedValues);
