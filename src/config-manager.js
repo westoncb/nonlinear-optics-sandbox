@@ -11,6 +11,7 @@ const defaultConfigData = {
   // Spatial grid spacing
   dx: 1,
   // Number of grid points in each dimension (square grid)
+  // NOTE: there is a bug with changing this at runtime which is why its treated differently
   gridSize: constants.GRID_SIZE,
   // Field amplitude preservation factor (1 = perfect preservation)
   damping: 1,
@@ -96,11 +97,205 @@ const defaultConfigData = {
   initialNoiseScale: 1e-8,
 };
 
+const focusingConfigData = {
+  // Core simulation parameters
+  dt: 0.4,
+  dx: 1,
+  gridSize: constants.GRID_SIZE,
+  damping: 0.9995, // Slight damping for stability
+  c: 1,
+  use9PointStencil: true,
+
+  // Nonlinear parameters tuned for clear focusing/defocusing cycles
+  chi: 1.0,
+  chi_ratio: -15, // Stronger Kerr effect for self-focusing
+  chi2_ratio: 0.5, // Reduced SHG to emphasize Kerr effects
+  shg_Isat: 0.1, // Higher saturation threshold
+  kerr_Isat: 0.1, // Higher saturation threshold
+
+  // Reduced coupling for clearer individual effects
+  crossKerrCoupling: 0.0005,
+  conversionCoupling: 0.002,
+
+  // Gain/loss for maintaining field strength
+  gain0: 0.8,
+  gainSat: 0.5,
+  linearLoss: 0.1,
+
+  // Wave properties
+  lambdaFund: 20.0,
+  lambdaSHG: 10.0,
+  phaseRef: Math.PI,
+
+  // Simplified cavity geometry for clearer effects
+  boundaryAlpha: 0.1, // Minimal deformation
+  boundaryM: 6, // Fewer perturbations
+  margin: 10,
+  boundaryTransitionWidth: 20,
+
+  // Lens parameters (static for this config)
+  lensRadius: 64,
+  fresnelZones: 64,
+  numSectors: 200,
+
+  // Disable optimization for this one
+  updateStrategy: "SHGTest",
+  learningRate: 1e-8,
+  optimizationInterval: 1,
+  disableAdaptation: true,
+
+  // Pulse parameters for repeated observation
+  pulseInterval: 100, // Regular pulse injection
+  initialPulseAmplitude: 5.0, // Moderate initial intensity
+  subsequentPulseAmplitude: 0.5, // Smaller subsequent pulses
+  beamWidth: 8, // Wider beam for clearer focusing
+  initialPulsePhaseShift: 0,
+  initialNoiseScale: 1e-8,
+};
+
+const fluidLikeNonlinearConfigData = {
+  // Core simulation parameters
+  dt: 0.12, // Smaller timestep as suggested
+  dx: 1,
+  gridSize: constants.GRID_SIZE,
+  damping: 1.0, // No damping for fluid-like behavior
+  c: 1,
+  use9PointStencil: true,
+
+  // Nonlinear parameters
+  chi: 2.5, // Even stronger base nonlinearity
+  chi_ratio: -30, // Stronger Kerr effect
+  chi2_ratio: 4.0, // Enhanced SHG
+  shg_Isat: 0.6, // Higher saturation
+  kerr_Isat: 0.6,
+
+  // Strong coupling for pattern formation
+  crossKerrCoupling: 0.015,
+  conversionCoupling: 0.02,
+
+  // Gain/loss balance
+  gain0: 1.8,
+  gainSat: 1.2,
+  linearLoss: 0.01, // Minimal loss
+
+  // Wave properties
+  lambdaFund: 20.0,
+  lambdaSHG: 10.0,
+  phaseRef: Math.PI,
+
+  // Cavity geometry
+  boundaryAlpha: 0.25, // As suggested
+  boundaryM: 7, // Keep 7-fold symmetry
+  margin: 10,
+  boundaryTransitionWidth: 8, // Even sharper boundary
+
+  // Standard lens parameters
+  lensRadius: 64,
+  fresnelZones: 64,
+  numSectors: 200,
+
+  // Optimization parameters
+  updateStrategy: "SHGTest",
+  learningRate: 1e-8,
+  optimizationInterval: 1,
+  disableAdaptation: true,
+
+  // Pulse parameters
+  pulseInterval: 25, // More frequent pulses
+  initialPulseAmplitude: 12.0, // Stronger initial pulse
+  subsequentPulseAmplitude: 2.5, // Stronger subsequent pulses
+  beamWidth: 5, // Tighter focus
+  initialPulsePhaseShift: 0,
+  initialNoiseScale: 2e-7, // More initial noise
+};
+
+const cellularConfigData = {
+  // Core simulation parameters
+  dt: 0.2,
+  dx: 1,
+  gridSize: constants.GRID_SIZE,
+  damping: 1.0,
+  c: 1,
+  use9PointStencil: true,
+
+  // Nonlinear parameters tuned for sharp interfaces
+  chi: 3.0, // Very strong base nonlinearity
+  chi_ratio: -40, // Extreme Kerr effect for sharp boundaries
+  chi2_ratio: 5.0, // Strong SHG for color contrast
+  shg_Isat: 0.8, // High saturation thresholds
+  kerr_Isat: 0.8, // to maintain distinct regions
+
+  // Coupling for pattern formation
+  crossKerrCoupling: 0.02, // Strong cross-coupling
+  conversionCoupling: 0.025, // Strong conversion
+
+  // Gain/loss for region formation
+  gain0: 2.0, // High gain
+  gainSat: 1.5, // High saturation
+  linearLoss: 0.0001, // Minimal loss
+
+  // Wave properties
+  lambdaFund: 25.0, // Longer wavelength for larger structures
+  lambdaSHG: 12.5, // Maintain 2:1 ratio
+  phaseRef: Math.PI,
+
+  // Cavity geometry
+  boundaryAlpha: 0.15, // Slightly stronger deformation
+  boundaryM: 5,
+  margin: 10,
+  boundaryTransitionWidth: 0.1, // Very sharp boundary
+
+  // Standard lens parameters
+  lensRadius: 64,
+  fresnelZones: 64,
+  numSectors: 200,
+
+  // Optimization parameters
+  updateStrategy: "phaseMatch",
+  learningRate: 1e-8,
+  optimizationInterval: 1,
+  disableAdaptation: false,
+
+  // Pulse parameters for sustained dynamics
+  pulseInterval: 20, // Very frequent pulses
+  initialPulseAmplitude: 15.0, // Stronger initial pulse
+  subsequentPulseAmplitude: 3.0, // Strong subsequent pulses
+  beamWidth: 4, // Tighter focus
+  initialPulsePhaseShift: 0,
+  initialNoiseScale: 1e-8,
+};
+
 export const referenceConfig = {
   data: defaultConfigData,
   metadata: {
     name: "Reference config",
-    description: "default canonical config without derived values",
+    description: "default canonical config",
+  },
+};
+
+export const focusingConfig = {
+  data: focusingConfigData,
+  metadata: {
+    name: "Focusing config",
+    description: "attempts to create focusing effects",
+  },
+};
+
+export const fluidLikeNonlinearConfig = {
+  data: fluidLikeNonlinearConfigData,
+  metadata: {
+    name: "Fluid-like nonlinear config",
+    description:
+      "attempts to create fluid-like behavior with strong nonlinear effects",
+  },
+};
+
+export const cellularConfig = {
+  data: cellularConfigData,
+  metadata: {
+    name: "Cellular config",
+    description:
+      "attempts to create cell-like structures (more clean and geometrically coherent)",
   },
 };
 
@@ -123,13 +318,10 @@ export const updateDerivedValues = (fullConfig) => {
 };
 
 export const canonicalConfigs = [
-  {
-    data: defaultConfigData,
-    metadata: {
-      name: "Test Config",
-      description: "typically what i use to test new ideas quickly",
-    },
-  },
+  cellularConfig,
+  referenceConfig,
+  focusingConfig,
+  fluidLikeNonlinearConfig,
 ].map(updateDerivedValues);
 
 export class ConfigManager {
