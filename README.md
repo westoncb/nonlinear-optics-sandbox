@@ -3,6 +3,7 @@
 An interactive study of controlled nonlinear dynamics, implemented through the concrete example of coupled optical fields. Similar to how a simple pendulum provides insight into oscillatory systems, this project uses a specific optical configuration—coupled fundamental/harmonic fields interacting with an adaptive medium—as an idealized model for exploring how optimization processes can guide complex nonlinear systems toward desired states.
 
 The app combines:
+
 - Real-time visualization of coupled field evolution
 - GPU-accelerated physics with nonlinear optical effects (e.g. Kerr, χ(2), birefringence—more details below)
 - Gradient-based optimization of spatially-varying control parameters
@@ -13,7 +14,10 @@ At its core is a sophisticated real-time nonlinear optics simulator (contained i
 
 Visit the live demo: https://westoncb.github.io/nonlinear-optics-sandbox/
 
-<img src="docs/images/screenshot.png" width="600" alt="Application interface showing real-time visualization of optical fields and optimization">
+<div align="center">
+  <img src="docs/images/screenshot.png" width="48%" alt="Main application interface showing field visualizations">
+  <img src="docs/images/config-screenshot.png" width="48%" alt="Application interface with configuration editor open">
+</div>
 
 ## Table of Contents
 
