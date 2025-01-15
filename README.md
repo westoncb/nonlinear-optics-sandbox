@@ -1,6 +1,17 @@
 # Nonlinear Optics Sandbox
 
-A browser-based sandbox for nonlinear optics experimentation featuring real-time visualization of optical field dynamics influenced by a lens-like structure at the center of a cavity boundary within which the simulation takes place. The app combines a GPU-based wave equation solver (using the slowly-varying envelope approximation) with gradient-based optimization. Through this, users can explore how an adapting lens/metasurface-like structure affects the nonlinear dynamics of coupled fields.
+An interactive study of controlled nonlinear dynamics, implemented through the concrete example of coupled optical fields. Similar to how a simple pendulum provides insight into oscillatory systems, this project uses a specific optical configuration—coupled fundamental/harmonic fields interacting with an adaptive medium—as an idealized model for exploring how optimization processes can guide complex nonlinear systems toward desired states.
+
+The app combines:
+- Real-time visualization of coupled field evolution
+- GPU-accelerated physics with nonlinear optical effects (e.g. Kerr, χ(2), birefringence—more details below)
+- Gradient-based optimization of spatially-varying control parameters
+
+While implemented using nonlinear optics, the underlying patterns of parameter-guided nonlinear dynamics may offer insights relevant to other complex systems.
+
+At its core is a sophisticated real-time nonlinear optics simulator (contained in `simulation.js`) which could be adapted for use in other projects.
+
+Visit the live demo: https://westoncb.github.io/nonlinear-optics-sandbox/
 
 <img src="docs/images/screenshot.png" width="600" alt="Application interface showing real-time visualization of optical fields and optimization">
 
@@ -29,13 +40,24 @@ npm install
 npm run dev
 ```
 
-Visit the live demo: https://westoncb.github.io/nonlinear-optics-sandbox/
-
 ---
 
 ## Project Overview
 
-The goal of the project has been to get an intuitive high-level sense of how nonlinear optical fields evolve in the context of an optimization process which attempts to control their characteristics in various ways. The simulation attempts to be as detailed as possible while remaining real-time; it has been designed to capture a wide breadth of nonlinear effects in attempt to give a holistic view (vs. specialized). The interface provides three synchronized views: the two evolving optical fields and the spatial distribution of optical properties within the lens (refractive index, nonlinearities, etc.) which updates in real time as the ADAM optimizer explores the parameter space. The "lens" rendering only gives an overview of its structure and would need to be augmented with more specialized displays of its various properties for finer analysis. The choice to include SHG as a second field is somewhat arbitrary, and a four-wave mixing setup might be a more interesting future direction.
+This project explores the control of nonlinear dynamics through a concrete implementation in optics. The heart of the system is a real-time simulation of two coupled optical fields (fundamental and second-harmonic) interacting with an adaptive optical medium whose properties are continuously adjusted by an optimization process. The simulation takes place within a configurable reflective cavity with detailed boundary modeling.
+
+Key aspects of the implementation:
+
+1. **Physical Simulation**: The simulation implements a rich set of nonlinear optical effects (Kerr, χ(2), birefringence, etc.) while maintaining real-time performance. This creates a complex yet controllable dynamical system with multiple competing nonlinear processes.
+
+2. **Optimization Framework**: An ADAM optimizer continuously updates the spatial distribution of optical properties (refractive index, nonlinearities) based on observed field characteristics. This creates a feedback loop between the nonlinear dynamics and the controlling medium.
+
+3. **Visualization**: The interface provides three synchronized views:
+   - The fundamental field evolution
+   - The second-harmonic field evolution
+   - The spatial distribution of optical properties, updating in real-time as the optimizer explores the parameter space
+
+While second-harmonic generation was chosen as the coupling mechanism between fields, the framework could be adapted for other nonlinear interactions (e.g., four-wave mixing). The essential pattern—optimization attempting to guide coupled nonlinear fields through parameter adjustment—remains the same.
 
 ---
 
