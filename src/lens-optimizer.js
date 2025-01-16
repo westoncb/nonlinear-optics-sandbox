@@ -334,6 +334,10 @@ export class LensOptimizer {
     // Return the array of recorded progress steps
     return this.progressHistory;
   }
+
+  resetProgress() {
+    this.progressHistory = [];
+  }
 }
 
 // =========================================================

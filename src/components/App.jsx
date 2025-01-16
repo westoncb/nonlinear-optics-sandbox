@@ -11,6 +11,7 @@ export const App = () => {
   const mainContainerRef = useRef(null);
   const renderSystemRef = useRef(null);
   const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [runId, setRunId] = useState(0);
   const [getProgress, setGetProgress] = useState(() => () => [
     {
       iteration: 0,
@@ -44,6 +45,15 @@ export const App = () => {
   const handleConfigSave = (configData, metadata) => {
     const newConfig = configManager.saveUserConfig(configData, metadata);
     setConfig(newConfig);
+  };
+
+  const onRunConfig = () => {
+    if (renderSystemRef.current?.lensOptimizer) {
+      renderSystemRef.current?.lensOptimizer.resetProgress();
+
+      // Force ProgressGraph to reset
+      setRunId((id) => id + 1);
+    }
   };
 
   // Initialize App
@@ -157,6 +167,7 @@ export const App = () => {
           </div>
           <div style={{ flex: "1 1 auto" }}>
             <ProgressGraph
+              key={runId}
               getProgress={getProgress}
               updateRate={50}
               maxPoints={40000}
@@ -260,6 +271,7 @@ export const App = () => {
         configManager={configManager}
         onSave={handleConfigSave}
         setConfig={setConfig}
+        onRunConfig={onRunConfig}
       />
     </div>
   );

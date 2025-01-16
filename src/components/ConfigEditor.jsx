@@ -36,6 +36,7 @@ export const ConfigEditor = ({
   configManager,
   onSave,
   setConfig,
+  onRunConfig,
 }) => {
   const [state, setState] = useState(initialEditorState);
   const configs = configManager.getAllConfigs();
@@ -186,6 +187,8 @@ export const ConfigEditor = ({
         description: state.form.description,
       },
     });
+
+    onRunConfig();
     onClose();
   };
 
