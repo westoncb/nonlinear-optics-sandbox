@@ -1,6 +1,6 @@
 {
-  "name": "lens-adapter-sim",
-  "private": true,
+  "name": "nonlinear-optics-sandbox",
+  "private": false,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
