@@ -258,7 +258,9 @@ export class LensOptimizer {
           const vChi3_hat = this.adamState.v_chi3[z][s] * bc2;
 
           // 3) Final param update
-          const lr = this.config.learningRate;
+          //const lr = this.config.learningRate;
+          const lr = this.config.learningRate / (1 + 0.01 * this.adamState.t);
+
           lensParams.baseIndex +=
             (lr * mBase_hat) / (Math.sqrt(vBase_hat) + this.adamState.epsilon);
           lensParams.dispersion +=
