@@ -469,7 +469,13 @@ export class RenderSystem {
       );
     }
 
+    // Refresh lens params texture (u_lens)
     this.updateLensTexture();
+
+    // Refresh gain mask texture (u_gainMask) using optimizer χ(2)/χ(3) + stored R mask
+    this.updateGainMaskTexture();
+
+    // Keep your stats display up to date
     this.updateLensStatistics();
   }
 
