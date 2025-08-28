@@ -359,9 +359,10 @@ export class RenderSystem {
   }
 
   initializeFields() {
-    const { fundamentalData, shgData, gainMaskData } = getInitialFieldState(
-      this.config,
-    );
+    const { fundamentalData, shgData, gainMaskData, baseRMask } =
+      getInitialFieldState(this.config);
+
+    this.lensOptimizer.setBaseRMask(baseRMask);
 
     // Upload fundamental field textures
     this.fundamentalTextures.forEach((texture) => {
@@ -470,6 +471,25 @@ export class RenderSystem {
 
     this.updateLensTexture();
     this.updateLensStatistics();
+  }
+
+  updateGainMaskTexture() {
+    const gl = this.mainGL;
+    const size = this.config.gridSize;
+    const gainMaskRGBA = this.lensOptimizer.getGainMaskData(size, size);
+
+    gl.bindTexture(gl.TEXTURE_2D, this.gainMaskTex);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA32F,
+      size,
+      size,
+      0,
+      gl.RGBA,
+      gl.FLOAT,
+      gainMaskRGBA,
+    );
   }
 
   updateLensStatistics() {

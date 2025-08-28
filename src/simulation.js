@@ -1047,8 +1047,6 @@ export const getInitialFieldState = (config) => {
   const centerY = Math.floor(config.gridSize / 2);
 
   // Initialize fundamental field
-
-  // Gaussian beam with phase terms for fundamental
   for (let y = 0; y < config.gridSize; y++) {
     for (let x = 0; x < config.gridSize; x++) {
       const idx = (y * config.gridSize + x) * 4;
@@ -1097,17 +1095,25 @@ export const getInitialFieldState = (config) => {
     }
   }
 
-  // Initialize gain mask
-  const gainMaskData = createGainMaskData(config);
+  // --- Build the base 1-channel gain mask (this is "baseRMask") ---
+  const baseRMask = createGainMaskData(config); // length = gridSize*gridSize
+
+  // --- Expand to RGBA for the shader's u_gainMask texture (initial seed) ---
   const rgbaData = new Float32Array(config.gridSize * config.gridSize * 4);
-  for (let i = 0; i < gainMaskData.length; i++) {
-    rgbaData[i * 4] = gainMaskData[i]; // R channel
-    rgbaData[i * 4 + 1] = 0.0001; // chi2 weight
-    rgbaData[i * 4 + 2] = 0.0001; // chi3 weight
-    rgbaData[i * 4 + 3] = 1; // A channel
+  for (let i = 0; i < baseRMask.length; i++) {
+    rgbaData[i * 4] = baseRMask[i]; // R channel (linear gain)
+    rgbaData[i * 4 + 1] = 0.0001; // G: initial chi2 weight (tiny seed)
+    rgbaData[i * 4 + 2] = 0.0001; // B: initial chi3 weight (tiny seed)
+    rgbaData[i * 4 + 3] = 1.0; // A
   }
 
-  return { shgData, fundamentalData, gainMaskData: rgbaData };
+  // Return both: the RGBA texture data and the raw 1-channel base mask
+  return {
+    shgData,
+    fundamentalData,
+    gainMaskData: rgbaData, // unchanged key for your existing uploader
+    baseRMask, // <-- pass this to optimizer.getGainMaskData(...)
+  };
 };
 
 function createGainMaskData(config) {

@@ -313,23 +313,126 @@ export class LensOptimizer {
         );
 
         if (coords) {
-          // Each pixel inherits the zone/sector's lens parameters
           const mode = this.lensModes[coords.zone][coords.sector];
-          const n_o = mode.baseIndex; // use your baseIndex as n_o
-          const n_e = mode.baseIndex; // isotropic (n_e == n_o) for now
-          const axisAngle = 0.0; // no optic-axis model yet
+
+          // Map your learned parameters to the shader's packing:
+          const n_o = mode.baseIndex; // ordinary index
+          const n_e = mode.baseIndex; // isotropic fallback (n_e == n_o)
+          const axisAngle = 0.0; // no optic-axis model (radians)
           const dispersion = mode.dispersion;
+
           data[idx + 0] = n_o; // R: n_o
           data[idx + 1] = n_e; // G: n_e
-          data[idx + 2] = axisAngle; // B: axis angle (rad)
-          data[idx + 3] = dispersion; // A: dispersion coeff
+          data[idx + 2] = axisAngle; // B: optic axis angle
+          data[idx + 3] = dispersion; // A: dispersion coefficient
         } else {
-          // Outside lens radius => e.g. vacuum or zero
-          data[idx + 0] = 1.0; // baseline
-          data[idx + 1] = 0.0; // no dispersion
-          data[idx + 2] = 0.0; // no chi2
-          data[idx + 3] = 0.0; // no chi3
+          // Outside the lens: vacuum-ish, no dispersion
+          data[idx + 0] = 1.0; // n_o
+          data[idx + 1] = 1.0; // n_e
+          data[idx + 2] = 0.0; // axis angle
+          data[idx + 3] = 0.0; // dispersion
         }
+      }
+    }
+
+    return data;
+  }
+
+  setBaseRMask(baseRMask) {
+    // Expect a Float32Array of length width*height from createGainMaskData(...)
+    this.baseRMask = baseRMask;
+  }
+
+  getGainMaskData(width, height) {
+    if (!this.baseRMask) {
+      throw new Error(
+        "LensOptimizer.getGainMaskData: baseRMask not set. Call setBaseRMask(...) after getInitialFieldState.",
+      );
+    }
+
+    // ---- Safety knobs (good defaults) ----
+    const chi2Scale = this.config.chi2Scale ?? 0.02; // keep weights small
+    const chi3Scale = this.config.chi3Scale ?? 0.02;
+    const MAX_W = this.config.maxChiWeight ?? 0.25; // hard cap (post-scale)
+    const EMA_ALPHA = this.config.gainMaskEma ?? 0.2; // smoothing (0..1)
+    const SLEW = this.config.gainMaskSlew ?? 0.02; // max step per update
+
+    const softplus = (x) =>
+      Math.log1p(Math.exp(Math.max(-40, Math.min(40, x))));
+
+    const data = new Float32Array(width * height * 4);
+    const centerX = Math.floor(width / 2);
+    const centerY = Math.floor(height / 2);
+
+    // Allocate previous GB (for smoothing) on first run
+    if (!this._prevG || this._prevG.length !== width * height) {
+      this._prevG = new Float32Array(width * height);
+      this._prevB = new Float32Array(width * height);
+      // seed with tiny values so first frame isn’t a jump
+      for (let i = 0; i < this._prevG.length; i++) {
+        this._prevG[i] = 0.0001;
+        this._prevB[i] = 0.0001;
+      }
+    }
+
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx4 = (y * width + x) * 4;
+        const idx1 = y * width + x;
+
+        const coords = polar.getZoneAndSector(
+          x,
+          y,
+          centerX,
+          centerY,
+          this.config.lensRadius,
+          this.config.fresnelZones,
+          this.config.numSectors,
+        );
+
+        const R = this.baseRMask[idx1] || 0.0;
+        let G = 0.0,
+          B = 0.0;
+
+        if (coords) {
+          const mode = this.lensModes[coords.zone][coords.sector];
+
+          // raw (nonnegative) weights from optimizer params
+          let rawG = chi2Scale * softplus(mode.chi2);
+          let rawB = chi3Scale * softplus(mode.chi3);
+
+          // hard cap
+          rawG = Math.min(rawG, MAX_W);
+          rawB = Math.min(rawB, MAX_W);
+
+          // slew-limit per update to avoid instant spikes
+          const prevG = this._prevG[idx1];
+          const prevB = this._prevB[idx1];
+          const stepG = clamp(rawG - prevG, -SLEW, SLEW);
+          const stepB = clamp(rawB - prevB, -SLEW, SLEW);
+          const slG = prevG + stepG;
+          const slB = prevB + stepB;
+
+          // EMA smoothing
+          G = EMA_ALPHA * slG + (1 - EMA_ALPHA) * prevG;
+          B = EMA_ALPHA * slB + (1 - EMA_ALPHA) * prevB;
+
+          // final clamp to [0, MAX_W]
+          G = clamp(G, 0, MAX_W);
+          B = clamp(B, 0, MAX_W);
+
+          // store for next frame
+          this._prevG[idx1] = G;
+          this._prevB[idx1] = B;
+        }
+
+        data[idx4 + 0] = clamp01(R); // R: linear gain mask (unchanged)
+        data[idx4 + 1] = G; // G: χ(2) weight (safe)
+        data[idx4 + 2] = B; // B: χ(3) weight (safe)
+        data[idx4 + 3] = 1.0; // A
       }
     }
 
