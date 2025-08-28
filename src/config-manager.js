@@ -38,7 +38,7 @@ const defaultConfigData = {
   pulseInterval: 0,
   subsequentPulseAmplitude: 0.08,
   beamWidth: 3,
-  initialPulseAmplitude: 22,
+  initialPulseAmplitude: 42,
   initialPulsePhaseShift: 0,
   initialNoiseScale: 0,
   boundaryR0: 198.4,
