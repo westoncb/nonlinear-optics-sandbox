@@ -315,10 +315,14 @@ export class LensOptimizer {
         if (coords) {
           // Each pixel inherits the zone/sector's lens parameters
           const mode = this.lensModes[coords.zone][coords.sector];
-          data[idx + 0] = mode.baseIndex;
-          data[idx + 1] = mode.dispersion;
-          data[idx + 2] = mode.chi2;
-          data[idx + 3] = mode.chi3;
+          const n_o = mode.baseIndex; // use your baseIndex as n_o
+          const n_e = mode.baseIndex; // isotropic (n_e == n_o) for now
+          const axisAngle = 0.0; // no optic-axis model yet
+          const dispersion = mode.dispersion;
+          data[idx + 0] = n_o; // R: n_o
+          data[idx + 1] = n_e; // G: n_e
+          data[idx + 2] = axisAngle; // B: axis angle (rad)
+          data[idx + 3] = dispersion; // A: dispersion coeff
         } else {
           // Outside lens radius => e.g. vacuum or zero
           data[idx + 0] = 1.0; // baseline
