@@ -61,6 +61,52 @@ export const getUpdateStrategies = (config) => {
       };
     },
 
+    // Strategy focusing purely on coherent phase matching
+    EnhancedPhaseMatch: (
+      fund,
+      shg,
+      count,
+      zone,
+      sector,
+      lensParams,
+      config,
+    ) => {
+      const fundAmp = Math.hypot(fund.real, fund.imag);
+      const shgAmp = Math.hypot(shg.real, shg.imag);
+      const conversionEfficiency = shgAmp / (fundAmp + 1e-6);
+
+      const r = zone / config.fresnelZones;
+      const theta = (2 * Math.PI * sector) / config.numSectors;
+      const radialPhase = Math.PI * r;
+
+      const phaseMismatch = Math.tanh(2.0 * Math.abs(shg.phaseMatch));
+
+      const loss =
+        0.8 * fundAmp + // penalize fundamental buildup
+        0.4 * fund.kerrStrength - // penalize excessive Kerr nonlinearities
+        2.5 * conversionEfficiency + // strongly reward SHG efficiency
+        1.5 * phaseMismatch + // strongly penalize phase mismatch
+        0.05 * Math.sin(4 * theta); // angular symmetry-breaking
+
+      const baseScale = 0.01;
+
+      const zoneWeight = {
+        chi2: Math.exp(-3 * r * r), // stronger focus at center
+        chi3: Math.sin(radialPhase), // smoothly varying radial modulation
+        base: 0.5 * (1 - Math.cos(radialPhase)), // smooth radial growth outward
+      };
+
+      return {
+        gradients: {
+          baseIndex: baseScale * loss * zoneWeight.base,
+          dispersion: baseScale * loss * (1 - r),
+          chi2: baseScale * loss * zoneWeight.chi2,
+          chi3: baseScale * loss * zoneWeight.chi3,
+        },
+        loss,
+      };
+    },
+
     phaseMatchAsymmetric: (
       fund,
       shg,
