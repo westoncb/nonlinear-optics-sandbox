@@ -7,7 +7,7 @@ export const constants = {
 const defaultConfigData = {
   // Core simulation parameters
   // Temporal step size for numerical integration of wave equation
-  dt: 0.4,
+  dt: 0.3,
   // Spatial grid spacing
   dx: 1,
   // Number of grid points in each dimension (square grid)
@@ -24,27 +24,27 @@ const defaultConfigData = {
   // Base strength of nonlinear optical effects
   chi: 0.8,
   // Relative strength of Kerr (χ(3)) nonlinearity
-  chi_ratio: -12,
+  chi_ratio: -6,
   // Relative strength of second-harmonic (χ(2)) nonlinearity
-  chi2_ratio: 1.0,
+  chi2_ratio: 1.2,
   // Intensity at which SHG conversion begins to saturate
-  shg_Isat: 0.02,
+  shg_Isat: 1,
   // Intensity at which Kerr effect begins to saturate
-  kerr_Isat: 0.03,
+  kerr_Isat: 2,
 
   // Coupling parameters
   // Strength of Kerr-mediated interaction between fundamental and SHG fields
   crossKerrCoupling: 0.001,
   // Efficiency of frequency conversion between fundamental and SHG
-  conversionCoupling: 0.005,
+  conversionCoupling: 0.015,
 
   // Gain and loss parameters
   // Maximum small-signal gain coefficient
-  gain0: 1,
+  gain0: 0.12,
   // Intensity at which gain medium begins to saturate
-  gainSat: 0.25,
+  gainSat: 0.3,
   // Rate of passive power loss in cavity
-  linearLoss: 0.0,
+  linearLoss: 0.12,
 
   // Wave properties
   // Wavelength of fundamental field in grid units
@@ -56,17 +56,17 @@ const defaultConfigData = {
 
   // Cavity geometry
   // Amplitude of boundary shape modulation (0 = perfect circle)
-  boundaryAlpha: 0.2,
+  boundaryAlpha: 0.25,
   // Number of symmetric perturbations around cavity boundary
-  boundaryM: 8,
+  boundaryM: 6,
   // Width of border region in grid points
   margin: 10,
   // Width of smooth transition region at boundary (in grid points)
-  boundaryTransitionWidth: 20,
+  boundaryTransitionWidth: 6,
 
   // Adaptive lens parameters
   // Radius of lens region in grid points
-  lensRadius: 64,
+  lensRadius: 96,
   // Number of phase wraps from center to edge of lens
   fresnelZones: 64,
   // Number of independently adjustable regions in lens
@@ -87,14 +87,14 @@ const defaultConfigData = {
   // Peak amplitude of all pulses after initial
   subsequentPulseAmplitude: 0.1,
   // Beam waist/width for a Gaussian pulse in grid units
-  beamWidth: 4,
+  beamWidth: 6,
 
   // Initial pulse peak amplitude
-  initialPulseAmplitude: 20,
+  initialPulseAmplitude: 15,
   // Initial pulse phase offset
   initialPulsePhaseShift: 0,
   // Amplitude of random fluctuations in initial field
-  initialNoiseScale: 1e-8,
+  initialNoiseScale: 0,
 };
 
 const focusingConfigData = {
