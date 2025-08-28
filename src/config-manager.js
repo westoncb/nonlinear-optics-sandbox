@@ -12,7 +12,7 @@ const defaultConfigData = {
   c: 1,
   use9PointStencil: true,
   chi: 0.9,
-  chi_ratio: -6,
+  chi_ratio: -1,
   chi2_ratio: 1.25,
   shg_Isat: 0.9,
   kerr_Isat: 2,
