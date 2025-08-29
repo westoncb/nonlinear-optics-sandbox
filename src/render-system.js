@@ -482,6 +482,9 @@ export class RenderSystem {
     // Refresh lens params texture (u_lens)
     this.updateLensTexture();
 
+    // NOTE: CURRENTLY DISABLING THIS KEY BEHAVIOR. All the optimization stuff needs a second look basically
+    // and hooking this up breaks the ability to look at other interesting/diverse configs, and optimization
+    // isn't really do anything all that interesting even when this is hooked up anyway so..
     // Refresh gain mask texture (u_gainMask) from optimizer χ(2)/χ(3) + stored R mask
     // this.updateGainMaskTexture();
 
