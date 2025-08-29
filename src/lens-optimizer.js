@@ -69,7 +69,7 @@ export class LensOptimizer {
    * (baseIndex, dispersion, chi2, chi3).
    */
   updateLens(fundamentalData, shgData, width, height) {
-    // 1) Allocate accumulators for fundamental + SHG wave sums
+    // 1) Accumulate complex sums per zone/sector
     const fundSum = Array(this.config.fresnelZones)
       .fill()
       .map(() =>
@@ -77,7 +77,6 @@ export class LensOptimizer {
           .fill()
           .map(() => ({ real: 0, imag: 0 })),
       );
-
     const shgSum = Array(this.config.fresnelZones)
       .fill()
       .map(() =>
@@ -85,12 +84,11 @@ export class LensOptimizer {
           .fill()
           .map(() => ({ real: 0, imag: 0 })),
       );
-
     const modeCount = Array(this.config.fresnelZones)
       .fill()
       .map(() => Array(this.config.numSectors).fill(0));
 
-    // 2) Reset the “extra” metrics we store in this.fundMetrics / this.shgMetrics
+    // Clear metric accumulators (kept for structure, not used for .zw anymore)
     this.fundMetrics.forEach((zone) =>
       zone.forEach((sector) => {
         sector.phaseGradMag = 0;
@@ -107,15 +105,12 @@ export class LensOptimizer {
     const centerX = Math.floor(width / 2);
     const centerY = Math.floor(height / 2);
 
-    // --------------------------------------------
-    // (A) ACCUMULATE WAVE DATA INTO ZONE/SECTOR BUCKETS
-    // --------------------------------------------
+    // (A) Bucket complex sums
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        // Check if (x,y) is inside the lens radius
         const dx = x - centerX;
         const dy = y - centerY;
-        const r = Math.sqrt(dx * dx + dy * dy);
+        const r = Math.hypot(dx, dy);
         if (r <= this.config.lensRadius) {
           const coords = polar.getZoneAndSector(
             x,
@@ -126,162 +121,154 @@ export class LensOptimizer {
             this.config.fresnelZones,
             this.config.numSectors,
           );
+          if (!coords) continue;
 
-          if (coords) {
-            const idx = (y * width + x) * 4;
+          const idx = (y * width + x) * 4;
 
-            // fundamentalData, shgData assumed to be RGBA or [real, imag, extra1, extra2]
-            const fundReal = fundamentalData[idx + 0];
-            const fundImag = fundamentalData[idx + 1];
-            const shgReal = shgData[idx + 0];
-            const shgImag = shgData[idx + 1];
+          // Only take real/imag; ignore .zw (ADE polarization in the sim)
+          const fRe = fundamentalData[idx + 0];
+          const fIm = fundamentalData[idx + 1];
+          const sRe = shgData[idx + 0];
+          const sIm = shgData[idx + 1];
 
-            // Accumulate amplitude
-            fundSum[coords.zone][coords.sector].real += fundReal;
-            fundSum[coords.zone][coords.sector].imag += fundImag;
-            shgSum[coords.zone][coords.sector].real += shgReal;
-            shgSum[coords.zone][coords.sector].imag += shgImag;
+          fundSum[coords.zone][coords.sector].real += fRe;
+          fundSum[coords.zone][coords.sector].imag += fIm;
+          shgSum[coords.zone][coords.sector].real += sRe;
+          shgSum[coords.zone][coords.sector].imag += sIm;
 
-            // Accumulate “metrics” (phaseGradMag, kerrStrength, phaseMatch, chiRatio)
-            this.fundMetrics[coords.zone][coords.sector].phaseGradMag +=
-              fundamentalData[idx + 2];
-            this.fundMetrics[coords.zone][coords.sector].kerrStrength +=
-              fundamentalData[idx + 3];
-
-            this.shgMetrics[coords.zone][coords.sector].phaseMatch +=
-              shgData[idx + 2];
-            this.shgMetrics[coords.zone][coords.sector].chiRatio +=
-              shgData[idx + 3];
-
-            modeCount[coords.zone][coords.sector]++;
-          }
+          modeCount[coords.zone][coords.sector]++;
         }
       }
     }
 
-    // --------------------------------------------
-    // (B) UPDATE LENS MODES VIA CHOSEN “STRATEGY” + ADAM
-    // --------------------------------------------
-    // increment ADAM iteration
+    // (B) Strategy + ADAM
     this.adamState.t += 1;
-    const { bc1, bc2 } = adam.getBiasCorrection(this.adamState); // e.g. (1 - β1^t), etc.
-
-    // console.log(bc1, bc2);
+    const { bc1, bc2 } = adam.getBiasCorrection(this.adamState);
 
     const chosenStrategy = this.config.updateStrategy;
     const updateStrategy = this.updateStrategies[chosenStrategy];
     if (!updateStrategy) {
       alert("Couldn't find update strategy: " + chosenStrategy);
-      return this.lensModes; // fallback
+      return this.lensModes;
     }
 
     let totalLoss = 0;
     let countUpdates = 0;
 
-    // Traverse each zone/sector
     for (let z = 0; z < this.config.fresnelZones; z++) {
       for (let s = 0; s < this.config.numSectors; s++) {
         const count = modeCount[z][s];
-        if (count > 0) {
-          // Average wave data
-          const fund = {
-            real: fundSum[z][s].real / count,
-            imag: fundSum[z][s].imag / count,
-            phaseGradMag: this.fundMetrics[z][s].phaseGradMag / count,
-            kerrStrength: this.fundMetrics[z][s].kerrStrength / count,
-          };
-          const shg = {
-            real: shgSum[z][s].real / count,
-            imag: shgSum[z][s].imag / count,
-            phaseMatch: this.shgMetrics[z][s].phaseMatch / count,
-            chiRatio: this.shgMetrics[z][s].chiRatio / count,
-          };
+        if (count <= 0) continue;
 
-          // Current lens parameters in this zone/sector
-          // (Should already exist as an object in lensModes[z][s])
-          const lensParams = this.lensModes[z][s];
+        // Average complex field per bucket
+        const fRe = fundSum[z][s].real / count;
+        const fIm = fundSum[z][s].imag / count;
+        const sRe = shgSum[z][s].real / count;
+        const sIm = shgSum[z][s].imag / count;
 
-          const { gradients, loss } = updateStrategy(
-            fund,
-            shg,
-            count,
-            z,
-            s,
-            lensParams,
-            this.config,
-          );
+        // Derived metrics (proxies), now that we don't read .zw
+        const fundAmp = Math.hypot(fRe, fIm);
+        const shgAmp = Math.hypot(sRe, sIm);
+        const fundPhase = Math.atan2(fIm, fRe);
+        const shgPhase = Math.atan2(sIm, sRe);
 
-          // 1) Accumulate ADAM moments
-          this.adamState.m_baseIndex[z][s] =
-            this.adamState.beta1 * this.adamState.m_baseIndex[z][s] +
-            (1 - this.adamState.beta1) * gradients.baseIndex;
-          this.adamState.v_baseIndex[z][s] =
-            this.adamState.beta2 * this.adamState.v_baseIndex[z][s] +
-            (1 - this.adamState.beta2) *
-              gradients.baseIndex *
-              gradients.baseIndex;
+        const fund = {
+          real: fRe,
+          imag: fIm,
+          // Use intensity as a Kerr proxy; leave phaseGradMag at 0 unless you add a gradient buffer
+          kerrStrength: fundAmp * fundAmp,
+          phaseGradMag: 0.0,
+        };
 
-          this.adamState.m_dispersion[z][s] =
-            this.adamState.beta1 * this.adamState.m_dispersion[z][s] +
-            (1 - this.adamState.beta1) * gradients.dispersion;
-          this.adamState.v_dispersion[z][s] =
-            this.adamState.beta2 * this.adamState.v_dispersion[z][s] +
-            (1 - this.adamState.beta2) *
-              gradients.dispersion *
-              gradients.dispersion;
+        const shg = {
+          real: sRe,
+          imag: sIm,
+          // Coherence proxy: +1 when shg ≈ e^{i2φ1}
+          phaseMatch: Math.cos(shgPhase - 2 * fundPhase),
+          // Rough χ ratio proxy: |E2| / |E1|^2
+          chiRatio: shgAmp / (fundAmp * fundAmp + 1e-6),
+        };
 
-          this.adamState.m_chi2[z][s] =
-            this.adamState.beta1 * this.adamState.m_chi2[z][s] +
-            (1 - this.adamState.beta1) * gradients.chi2;
-          this.adamState.v_chi2[z][s] =
-            this.adamState.beta2 * this.adamState.v_chi2[z][s] +
-            (1 - this.adamState.beta2) * gradients.chi2 * gradients.chi2;
+        const lensParams = this.lensModes[z][s];
 
-          this.adamState.m_chi3[z][s] =
-            this.adamState.beta1 * this.adamState.m_chi3[z][s] +
-            (1 - this.adamState.beta1) * gradients.chi3;
-          this.adamState.v_chi3[z][s] =
-            this.adamState.beta2 * this.adamState.v_chi3[z][s] +
-            (1 - this.adamState.beta2) * gradients.chi3 * gradients.chi3;
+        const { gradients, loss } = updateStrategy(
+          fund,
+          shg,
+          count,
+          z,
+          s,
+          lensParams,
+          this.config,
+        );
 
-          // 2) Compute bias-corrected
-          const mBase_hat = this.adamState.m_baseIndex[z][s] * bc1;
-          const vBase_hat = this.adamState.v_baseIndex[z][s] * bc2;
+        // ---- ADAM moments ----
+        this.adamState.m_baseIndex[z][s] =
+          this.adamState.beta1 * this.adamState.m_baseIndex[z][s] +
+          (1 - this.adamState.beta1) * gradients.baseIndex;
+        this.adamState.v_baseIndex[z][s] =
+          this.adamState.beta2 * this.adamState.v_baseIndex[z][s] +
+          (1 - this.adamState.beta2) *
+            gradients.baseIndex *
+            gradients.baseIndex;
 
-          const mDisp_hat = this.adamState.m_dispersion[z][s] * bc1;
-          const vDisp_hat = this.adamState.v_dispersion[z][s] * bc2;
+        this.adamState.m_dispersion[z][s] =
+          this.adamState.beta1 * this.adamState.m_dispersion[z][s] +
+          (1 - this.adamState.beta1) * gradients.dispersion;
+        this.adamState.v_dispersion[z][s] =
+          this.adamState.beta2 * this.adamState.v_dispersion[z][s] +
+          (1 - this.adamState.beta2) *
+            gradients.dispersion *
+            gradients.dispersion;
 
-          const mChi2_hat = this.adamState.m_chi2[z][s] * bc1;
-          const vChi2_hat = this.adamState.v_chi2[z][s] * bc2;
+        this.adamState.m_chi2[z][s] =
+          this.adamState.beta1 * this.adamState.m_chi2[z][s] +
+          (1 - this.adamState.beta1) * gradients.chi2;
+        this.adamState.v_chi2[z][s] =
+          this.adamState.beta2 * this.adamState.v_chi2[z][s] +
+          (1 - this.adamState.beta2) * gradients.chi2 * gradients.chi2;
 
-          const mChi3_hat = this.adamState.m_chi3[z][s] * bc1;
-          const vChi3_hat = this.adamState.v_chi3[z][s] * bc2;
+        this.adamState.m_chi3[z][s] =
+          this.adamState.beta1 * this.adamState.m_chi3[z][s] +
+          (1 - this.adamState.beta1) * gradients.chi3;
+        this.adamState.v_chi3[z][s] =
+          this.adamState.beta2 * this.adamState.v_chi3[z][s] +
+          (1 - this.adamState.beta2) * gradients.chi3 * gradients.chi3;
 
-          // 3) Final param update
-          //const lr = this.config.learningRate;
-          const lr = this.config.learningRate / (1 + 0.01 * this.adamState.t);
+        // ---- Bias-corrected step ----
+        const mBase_hat = this.adamState.m_baseIndex[z][s] * bc1;
+        const vBase_hat = this.adamState.v_baseIndex[z][s] * bc2;
 
-          lensParams.baseIndex +=
-            (lr * mBase_hat) / (Math.sqrt(vBase_hat) + this.adamState.epsilon);
-          lensParams.dispersion +=
-            (lr * mDisp_hat) / (Math.sqrt(vDisp_hat) + this.adamState.epsilon);
-          lensParams.chi2 +=
-            (lr * mChi2_hat) / (Math.sqrt(vChi2_hat) + this.adamState.epsilon);
-          lensParams.chi3 +=
-            (lr * mChi3_hat) / (Math.sqrt(vChi3_hat) + this.adamState.epsilon);
+        const mDisp_hat = this.adamState.m_dispersion[z][s] * bc1;
+        const vDisp_hat = this.adamState.v_dispersion[z][s] * bc2;
 
-          totalLoss += loss;
-          countUpdates++;
-        }
+        const mChi2_hat = this.adamState.m_chi2[z][s] * bc1;
+        const vChi2_hat = this.adamState.v_chi2[z][s] * bc2;
+
+        const mChi3_hat = this.adamState.m_chi3[z][s] * bc1;
+        const vChi3_hat = this.adamState.v_chi3[z][s] * bc2;
+
+        const lr = this.config.learningRate / (1 + 0.01 * this.adamState.t);
+
+        const lp = this.lensModes[z][s];
+        lp.baseIndex +=
+          (lr * mBase_hat) / (Math.sqrt(vBase_hat) + this.adamState.epsilon);
+        lp.dispersion +=
+          (lr * mDisp_hat) / (Math.sqrt(vDisp_hat) + this.adamState.epsilon);
+        lp.chi2 +=
+          (lr * mChi2_hat) / (Math.sqrt(vChi2_hat) + this.adamState.epsilon);
+        lp.chi3 +=
+          (lr * mChi3_hat) / (Math.sqrt(vChi3_hat) + this.adamState.epsilon);
+
+        totalLoss += loss;
+        countUpdates++;
       }
     }
 
-    // (C) Record progress metric if any updates happened
+    // (C) Progress metric
     if (countUpdates > 0) {
-      const avgLoss = totalLoss / countUpdates;
       this.progressHistory.push({
         iteration: this.adamState.t,
-        metric: avgLoss,
+        metric: totalLoss / countUpdates,
       });
     }
   }

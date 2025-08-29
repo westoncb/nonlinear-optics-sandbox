@@ -151,6 +151,91 @@ export const getUpdateStrategies = (config) => {
       };
     },
 
+    PhaseLockedSHG: (fund, shg, count, zone, sector, lensParams, config) => {
+      // --- Derived field metrics ---
+      const eps = 1e-6;
+      const fAmp = Math.hypot(fund.real, fund.imag);
+      const sAmp = Math.hypot(shg.real, shg.imag);
+
+      const fPhase = Math.atan2(fund.imag, fund.real);
+      const sPhase = Math.atan2(shg.imag, shg.real);
+
+      // Δφ = φ2 - 2φ1 wrapped to [-π, π]
+      let dphi = sPhase - 2 * fPhase;
+      if (dphi > Math.PI) dphi -= 2 * Math.PI;
+      if (dphi < -Math.PI) dphi += 2 * Math.PI;
+
+      // Coherence and efficiency proxies
+      const pm = Math.cos(dphi); // ∈ [-1,1], 1 = perfect lock
+      const pm_pos = 0.5 * (pm + 1.0); // ∈ [0,1]
+      const eta = Math.max(0, Math.min(1, sAmp / (fAmp * fAmp + eps)));
+
+      // Spatial factors
+      const Z = Math.max(1, (config.fresnelZones || 1) - 1);
+      const r = zone / Math.max(1, config.fresnelZones || 1); // [0,1] center→edge
+      const theta =
+        (2 * Math.PI * sector) / Math.max(1, config.numSectors || 1);
+
+      // Weights (can be tweaked via config.strategyWeights?.PhaseLockedSHG)
+      const w = Object.assign(
+        {
+          w_pm: 1.0,
+          w_eta: 1.2,
+          w_kerr: 0.1, // loss weights
+          kb: 0.8,
+          kd: 0.6,
+          kc2: 1.1,
+          kc3: 0.8, // per-parameter gains
+          lambda_base: 0.02,
+          lambda_disp: 0.02, // L2 priors to keep params sane
+        },
+        (config.strategyWeights && config.strategyWeights.PhaseLockedSHG) || {},
+      );
+
+      // Loss for logging/ADAM scaling (lower is better)
+      const loss =
+        w.w_pm * (1.0 - pm) + // phase misalignment
+        w.w_eta * (1.0 - eta) + // low SHG efficiency
+        w.w_kerr * (fund.kerrStrength || 0); // strong Kerr
+
+      // Base step scale (optionally tunable via config.strategyScales?.PhaseLockedSHG)
+      const baseScale =
+        (config.strategyScales && config.strategyScales.PhaseLockedSHG) || 0.01;
+
+      // --- Gradients (heuristic but directional) ---
+      // Use sin(Δφ) to move mismatch toward zero; modulate spatially.
+      const sinD = Math.sin(dphi);
+
+      // Index: push more in outer zones; add mild azimuthal symmetry-breaking
+      const g_base =
+        w.kb * sinD * (0.5 + 0.5 * r) * (1.0 + 0.15 * Math.cos(2 * theta)) -
+        // L2 prior toward baseIndex ≈ 1.0
+        w.lambda_base * (lensParams.baseIndex - 1.0);
+
+      // Dispersion: adjust more near center (acts like "fine tuner")
+      const g_disp =
+        w.kd * sinD * (1.0 - r) -
+        // L2 prior toward dispersion ≈ 0
+        w.lambda_disp * lensParams.dispersion;
+
+      // χ(2): reward when phase is aligned and efficiency is lagging
+      const g_chi2 = w.kc2 * pm_pos * (1.0 - eta) * Math.exp(-3 * r * r);
+
+      // χ(3): damp if Kerr is high; allow a small positive nudge otherwise
+      const kerr = fund.kerrStrength || 0.0;
+      const g_chi3 = -w.kc3 * kerr + 0.05 * (1.0 - eta) * (1.0 - pm_pos);
+
+      return {
+        gradients: {
+          baseIndex: baseScale * g_base,
+          dispersion: baseScale * g_disp,
+          chi2: baseScale * g_chi2,
+          chi3: baseScale * g_chi3,
+        },
+        loss,
+      };
+    },
+
     SHGTest: (fund, shg, count, zone, sector, lensParams, config) => {
       // Compute both amplitude and phase gradients
       const fundAmpGrads = computeAmplitudeGradients(fund.real, fund.imag);

@@ -396,6 +396,7 @@ export class RenderSystem {
       );
     });
 
+    // Upload initial gain mask (kept when adaptation is disabled)
     this.mainGL.bindTexture(this.mainGL.TEXTURE_2D, this.gainMaskTex);
     this.mainGL.texImage2D(
       this.mainGL.TEXTURE_2D,
@@ -408,6 +409,12 @@ export class RenderSystem {
       this.mainGL.FLOAT,
       gainMaskData,
     );
+
+    // Seed a neutral lens texture immediately (n_o=n_e=1, axis=0, disp=0 from default modes)
+    this.updateLensTexture();
+
+    // Seed lens statistics once so previews have sane ranges even if adaptation is off
+    this.updateLensStatistics();
   }
 
   readFieldData(texture) {
@@ -455,25 +462,28 @@ export class RenderSystem {
   }
 
   updateLens() {
+    // When adaptation is disabled, leave lens & gain-mask exactly as initialized.
+    if (this.config.disableAdaptation) {
+      return;
+    }
+
     const fundamentalData = this.readFieldData(
       this.fundamentalTextures[this.current],
     );
     const shgData = this.readFieldData(this.shgTextures[this.current]);
 
-    if (!this.config.disableAdaptation) {
-      this.lensOptimizer.updateLens(
-        fundamentalData,
-        shgData,
-        this.config.gridSize,
-        this.config.gridSize,
-      );
-    }
+    this.lensOptimizer.updateLens(
+      fundamentalData,
+      shgData,
+      this.config.gridSize,
+      this.config.gridSize,
+    );
 
     // Refresh lens params texture (u_lens)
     this.updateLensTexture();
 
-    // Refresh gain mask texture (u_gainMask) using optimizer χ(2)/χ(3) + stored R mask
-    this.updateGainMaskTexture();
+    // Refresh gain mask texture (u_gainMask) from optimizer χ(2)/χ(3) + stored R mask
+    // this.updateGainMaskTexture();
 
     // Keep your stats display up to date
     this.updateLensStatistics();
@@ -499,32 +509,31 @@ export class RenderSystem {
   }
 
   updateLensStatistics() {
-    const lensData = this.readFieldData(this.lensTexture);
-    let baseValues = [];
-    let dispersionValues = [];
-    let chi2Values = [];
-    let chi3Values = [];
+    const lensData = this.readFieldData(this.lensTexture); // R=n_o, G=n_e, B=axis, A=disp
+    const gainData = this.readFieldData(this.gainMaskTex); // R=gain, G=chi2, B=chi3, A=1
 
-    const centerX = Math.floor(this.config.gridSize / 2);
-    const centerY = Math.floor(this.config.gridSize / 2);
+    const baseValues = [];
+    const dispersionValues = [];
+    const chi2Values = [];
+    const chi3Values = [];
+
+    const cx = Math.floor(this.config.gridSize / 2);
+    const cy = cx;
 
     for (let y = 0; y < this.config.gridSize; y++) {
       for (let x = 0; x < this.config.gridSize; x++) {
-        const dx = x - centerX;
-        const dy = y - centerY;
-        const r = Math.sqrt(dx * dx + dy * dy);
-        if (r <= this.config.lensRadius) {
-          const idx = (y * this.config.gridSize + x) * 4;
-          // Track each component separately
-          baseValues.push(lensData[idx]);
-          dispersionValues.push(lensData[idx + 1]);
-          chi2Values.push(lensData[idx + 2]);
-          chi3Values.push(lensData[idx + 3]);
+        const dx = x - cx,
+          dy = y - cy;
+        if (Math.hypot(dx, dy) <= this.config.lensRadius) {
+          const i = (y * this.config.gridSize + x) * 4;
+          baseValues.push(lensData[i + 0]); // n_o
+          dispersionValues.push(lensData[i + 3]); // dispersion (A)
+          chi2Values.push(gainData[i + 1]); // χ(2) weight (G)
+          chi3Values.push(gainData[i + 2]); // χ(3) weight (B)
         }
       }
     }
 
-    // Calculate ranges for each component using your original IQR method
     this.lensStatistics = {
       baseIndex: stats.calculateDisplayRange(baseValues),
       dispersion: stats.calculateDisplayRange(dispersionValues),
@@ -592,6 +601,7 @@ export class RenderSystem {
     const gl = this.mainGL;
     const uniforms = this.uniformLocations.simulation;
 
+    // ---- Scalars & vectors (unchanged) ----
     gl.uniform1f(uniforms.u_dt, this.config.dt);
     gl.uniform1f(uniforms.u_dx, this.config.dx);
     gl.uniform1f(uniforms.u_damping, this.config.damping);
@@ -602,7 +612,6 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_kerr_Isat, this.config.kerr_Isat);
     gl.uniform1f(uniforms.u_chi, this.config.chi);
 
-    // Resolution, boundary params
     gl.uniform2f(
       uniforms.u_resolution,
       this.config.gridSize,
@@ -640,7 +649,7 @@ export class RenderSystem {
       this.config.conversionCoupling || 0.0,
     );
 
-    // Bind relevant textures
+    // ---- Band-local history (current / previous for the target band) ----
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(
       gl.TEXTURE_2D,
@@ -659,26 +668,30 @@ export class RenderSystem {
     );
     gl.uniform1i(uniforms.u_previous, 1);
 
-    // Lens
+    // ---- Lens always needed ----
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.lensTexture);
     gl.uniform1i(uniforms.u_lens, 2);
 
-    if (updateTarget === 1) {
-      // For SHG update, bind fundamental as input
-      gl.activeTexture(gl.TEXTURE3);
-      gl.bindTexture(gl.TEXTURE_2D, this.fundamentalTextures[this.next]);
-      gl.uniform1i(uniforms.u_fundamental, 3);
-    } else {
-      // For fundamental update, bind SHG as input
-      gl.activeTexture(gl.TEXTURE3);
-      gl.bindTexture(gl.TEXTURE_2D, this.shgTextures[this.next]);
-      gl.uniform1i(uniforms.u_shg, 3);
-    }
+    // ---- Always bind BOTH bands (phase mismatch, cross-Kerr, SHG walk-off) ----
+    // Fundamental sampler: in the SHG pass, use just-updated fundamental (next); otherwise current.
+    const fundForCross =
+      updateTarget === 1
+        ? this.fundamentalTextures[this.next]
+        : this.fundamentalTextures[this.current];
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, fundForCross);
+    gl.uniform1i(uniforms.u_fundamental, 3);
 
+    // SHG sampler: both passes need access to the current SHG
     gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.shgTextures[this.current]);
+    gl.uniform1i(uniforms.u_shg, 4);
+
+    // ---- Gain mask (moved to unit 5) ----
+    gl.activeTexture(gl.TEXTURE5);
     gl.bindTexture(gl.TEXTURE_2D, this.gainMaskTex);
-    gl.uniform1i(uniforms.u_gainMask, 4);
+    gl.uniform1i(uniforms.u_gainMask, 5);
   }
 
   renderPrimary() {
@@ -689,25 +702,22 @@ export class RenderSystem {
     const mode = this.displayModes.primary;
     gl.uniform1i(uniforms.u_displayMode, mode);
 
-    if (mode === DisplayMode.FUNDAMENTAL) {
-      // Directly use fundamentalTextures[this.current]
+    if (mode === 0) {
+      // FUNDAMENTAL
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.fundamentalTextures[this.current]);
       gl.uniform1i(uniforms.u_field, 0);
 
-      // Set lens uniforms to default (not used)
       gl.uniform1f(uniforms.u_lensDisplayMin, 0.0);
       gl.uniform1f(uniforms.u_lensDisplayMax, 1.0);
       gl.uniform1f(uniforms.u_lensRadius, 0.0);
-
-      // Full resolution
       gl.uniform2f(
         uniforms.u_resolution,
         this.config.gridSize,
         this.config.gridSize,
       );
-    } else if (mode === DisplayMode.SHG) {
-      // If we ever choose SHG for primary, we can similarily read directly from shgTextures[this.current]
+    } else if (mode === 1) {
+      // SHG
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.shgTextures[this.current]);
       gl.uniform1i(uniforms.u_field, 0);
@@ -715,20 +725,27 @@ export class RenderSystem {
       gl.uniform1f(uniforms.u_lensDisplayMin, 0.0);
       gl.uniform1f(uniforms.u_lensDisplayMax, 1.0);
       gl.uniform1f(uniforms.u_lensRadius, 0.0);
-
       gl.uniform2f(
         uniforms.u_resolution,
         this.config.gridSize,
         this.config.gridSize,
       );
-    } else if (mode === DisplayMode.LENS) {
-      // For lens in primary, can directly use lensTexture
+    } else {
+      // LENS
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.lensTexture);
       gl.uniform1i(uniforms.u_field, 0);
 
-      gl.uniform1f(uniforms.u_lensDisplayMin, this.lensStatistics.displayMin);
-      gl.uniform1f(uniforms.u_lensDisplayMax, this.lensStatistics.displayMax);
+      // IMPORTANT: pass per-channel ranges
+      gl.uniform1f(
+        uniforms.u_lensDisplayMin,
+        this.lensStatistics.dispersion.min,
+      );
+      gl.uniform1f(
+        uniforms.u_lensDisplayMax,
+        this.lensStatistics.dispersion.max,
+      );
+
       gl.uniform2f(
         uniforms.u_baseIndexRange,
         this.lensStatistics.baseIndex.min,
@@ -744,6 +761,7 @@ export class RenderSystem {
         this.lensStatistics.chi3.min,
         this.lensStatistics.chi3.max,
       );
+
       gl.uniform1f(uniforms.u_lensRadius, this.config.lensRadius);
       gl.uniform2f(
         uniforms.u_resolution,
@@ -771,16 +789,11 @@ export class RenderSystem {
       ],
     );
 
-    // For SHG and LENS modes (and even FUNDAMENTAL if chosen), we do CPU readback + scale
-    // Then upload to the pre-created texture with texSubImage2D.
-
     let data = null;
     let lensSettings = { min: 0, max: 1, radius: 0 };
     const size = this.config.gridSize;
 
-    if (mode === DisplayMode.FUNDAMENTAL) {
-      // CPU readback for fundamental if displayed in preview:
-      // This is less common, but we handle it similarly to SHG.
+    if (mode === 0) {
       this.mainGL.bindFramebuffer(
         this.mainGL.FRAMEBUFFER,
         this.fundamentalFramebuffers[this.current],
@@ -801,7 +814,7 @@ export class RenderSystem {
         previewSize,
       );
       data = this.shgDisplayBuffer;
-    } else if (mode === DisplayMode.SHG) {
+    } else if (mode === 1) {
       this.mainGL.bindFramebuffer(
         this.mainGL.FRAMEBUFFER,
         this.shgFramebuffers[this.current],
@@ -822,13 +835,31 @@ export class RenderSystem {
         previewSize,
       );
       data = this.shgDisplayBuffer;
-    } else if (mode === DisplayMode.LENS) {
-      const lensData = this.readFieldData(this.lensTexture); // CPU readback from lens
-      scaleDataForDisplay(lensData, size, this.lensDisplayBuffer, previewSize);
+    } else {
+      const lensData = this.readFieldData(this.lensTexture); // raw RGBA: [n_o, n_e, axis, disp]
+      // keep raw
+      if (previewSize === size) {
+        this.lensDisplayBuffer.set(lensData);
+      } else {
+        // nearest-neighbor fallback without normalization
+        const scale = size / previewSize;
+        let di = 0;
+        for (let y = 0; y < previewSize; y++) {
+          const sy = Math.min(size - 1, Math.floor(y * scale));
+          for (let x = 0; x < previewSize; x++) {
+            const sx = Math.min(size - 1, Math.floor(x * scale));
+            const si = (sy * size + sx) * 4;
+            this.lensDisplayBuffer[di++] = lensData[si + 0];
+            this.lensDisplayBuffer[di++] = lensData[si + 1];
+            this.lensDisplayBuffer[di++] = lensData[si + 2];
+            this.lensDisplayBuffer[di++] = lensData[si + 3];
+          }
+        }
+      }
       data = this.lensDisplayBuffer;
       lensSettings = {
-        min: this.lensStatistics.displayMin,
-        max: this.lensStatistics.displayMax,
+        min: this.lensStatistics.dispersion.min,
+        max: this.lensStatistics.dispersion.max,
         radius: this.config.lensRadius,
       };
     }
@@ -853,6 +884,24 @@ export class RenderSystem {
     gl.uniform1f(uniforms.u_lensDisplayMax, lensSettings.max);
     gl.uniform1f(uniforms.u_lensRadius, lensSettings.radius);
     gl.uniform2f(uniforms.u_resolution, previewSize, previewSize);
+
+    if (mode === 2) {
+      gl.uniform2f(
+        uniforms.u_baseIndexRange,
+        this.lensStatistics.baseIndex.min,
+        this.lensStatistics.baseIndex.max,
+      );
+      gl.uniform2f(
+        uniforms.u_chi2Range,
+        this.lensStatistics.chi2.min,
+        this.lensStatistics.chi2.max,
+      );
+      gl.uniform2f(
+        uniforms.u_chi3Range,
+        this.lensStatistics.chi3.min,
+        this.lensStatistics.chi3.max,
+      );
+    }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

@@ -827,30 +827,6 @@ export const getSimulationShaderSource = (config) => {
      D) Band Kernels & Main
      ========================================================== */
 
-  // ADE + walk-off transport for SHG band
-  vec4 applyShgOps(vec2 pos, vec2 texel, vec2 E_in, vec2 P, vec2 P_prev){
-    // 1) ADE: local dispersion kick
-    vec2 P_new, dE;
-    lorentzADE_step(false, pos, texel, E_in, P, P_prev, P_new, dE);
-    vec2 E1 = E_in + dE;
-
-    // 2) Walk-off: advect SHG field from the source texture (u_current)
-    vec2 shgHere = texture(u_current, pos*texel).xy;
-    float I_here = dot(shgHere, shgHere);
-    if (I_here > 1e-6) {                       // fast path: skip when tiny
-      vec2 offset = computeWalkoffOffset_SHG(pos, texel);
-      if (offset.x != 0.0 || offset.y != 0.0){
-        vec2 adv = macCormackAdvect(u_current, pos, texel, offset);
-        float Ia = localIavg(pos, texel, u_current);
-        float I0 = max(1e-12, 0.1 * Ia);
-        float w  = smoothstep(I0, 10.0*I0, I_here);
-        E1 = mix(E1, adv, WALK_BLEND * w);
-      }
-    }
-
-    return vec4(E1, P_new); // .xy = new E, .zw = new P
-  }
-
   // Core per-pixel update for one band with Strang-split NL
   vec4 computeInteriorField(vec2 pos, vec2 texel, bool isFundamental, float damp) {
     // ---- Gather state for this band ----
@@ -1102,8 +1078,8 @@ export const getInitialFieldState = (config) => {
   const rgbaData = new Float32Array(config.gridSize * config.gridSize * 4);
   for (let i = 0; i < baseRMask.length; i++) {
     rgbaData[i * 4] = baseRMask[i]; // R channel (linear gain)
-    rgbaData[i * 4 + 1] = 0.0001; // G: initial chi2 weight (tiny seed)
-    rgbaData[i * 4 + 2] = 0.0001; // B: initial chi3 weight (tiny seed)
+    rgbaData[i * 4 + 1] = 0.00001; // G: initial chi2 weight (tiny seed)
+    rgbaData[i * 4 + 2] = 0.00001; // B: initial chi3 weight (tiny seed)
     rgbaData[i * 4 + 3] = 1.0; // A
   }
 

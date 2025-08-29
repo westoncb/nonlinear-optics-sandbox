@@ -11,6 +11,28 @@ export function hsv2rgb(h, s, v) {
   ].map((x) => Math.floor(x * 255));
 }
 
+// add a raw scaler that does NOT normalize or remap channels
+export function resizeFloatRGBANearest(src, srcSize, dst, dstSize) {
+  if (srcSize === dstSize) {
+    // fast path: 1:1 copy
+    dst.set(src);
+    return;
+  }
+  const scale = srcSize / dstSize;
+  let di = 0;
+  for (let y = 0; y < dstSize; y++) {
+    const sy = Math.min(srcSize - 1, Math.floor(y * scale));
+    for (let x = 0; x < dstSize; x++) {
+      const sx = Math.min(srcSize - 1, Math.floor(x * scale));
+      const si = (sy * srcSize + sx) * 4;
+      dst[di++] = src[si + 0];
+      dst[di++] = src[si + 1];
+      dst[di++] = src[si + 2];
+      dst[di++] = src[si + 3];
+    }
+  }
+}
+
 // WebGL helpers
 export const webgl = {
   createShader(gl, type, source) {
